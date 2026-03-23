@@ -6,8 +6,12 @@ WHAT (level) from HOW (shape) via period-aligned matrix reshaping.
     y(phase, period) = Level(period) × Shape(phase)
 
 Level is forecast by Ridge regression with soft-average GCV.
-Shape is estimated structurally from recent proportions.
-One SVD. No model selection. No neural network.
+Shape is estimated via Dirichlet-Multinomial empirical Bayes, with
+context derived from the secondary period structure (e.g., day-of-week
+for hourly data). When no secondary period exists, degenerates to
+the simple K-period average.
+
+One SVD. Zero hyperparameters. No neural network.
 
 Example:
     >>> from flair import flair_forecast
@@ -240,7 +244,11 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
     samples : ndarray, shape (n_samples, horizon)
         Probabilistic forecast sample paths.
     """
-    y = np.maximum(np.nan_to_num(np.asarray(y_raw, float), nan=0.0), 0.0)
+    y = np.nan_to_num(np.asarray(y_raw, float), nan=0.0)
+    # Location shift: make all values positive for Box-Cox compatibility
+    y_floor = y.min()
+    y_shift = max(1 - y_floor, 1.0)  # shift so min(y) >= 1
+    y = y + y_shift
     n = len(y)
     period = _get_period(freq)
     cal = _get_periods(freq)
@@ -270,17 +278,58 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
     # ── Reshape ──────────────────────────────────────────────────────
     mat = y_trim.reshape(n_complete, P).T  # (P, n_complete)
 
-    # ── Shape: proportions from last K periods ───────────────────────
+    # ── Shape: Dirichlet-Multinomial empirical Bayes ─────────────────
     K = min(5, n_complete)
     recent = mat[:, -K:]
     totals = recent.sum(axis=0, keepdims=True)
-    S = np.where(totals > 1e-10, recent / totals, 1.0 / P).mean(axis=1)
-    S /= max(S.sum(), 1e-10)
+    S_global = np.where(totals > 1e-10, recent / totals, 1.0 / P).mean(axis=1)
+    S_global /= max(S_global.sum(), 1e-10)
 
-    # ── Level: period totals → Box-Cox → NLinear ────────────────────
+    # ── Level: period totals ──────────────────────────────────────────
     L = mat.sum(axis=0)
+
+    # ── Context = period position mod C (secondary / primary period) ─
+    C = secondary[0] // P if (secondary and secondary[0] % P == 0 and
+                               n_complete >= secondary[0] // P) else 1
+    m = int(np.ceil(horizon / P))
+
+    if C <= 1:
+        S_forecast = np.tile(S_global, (m, 1))
+        S_hist = np.tile(S_global, (n_complete, 1))
+    else:
+        # Data window: K*C recent periods → K observations per context
+        K_ds = min(K * C, n_complete)
+        ds_mat = mat[:, -K_ds:]
+        ds_L = L[-K_ds:]
+        ds_ctx = np.arange(n_complete - K_ds, n_complete) % C
+
+        # Kappa: Dirichlet concentration from method-of-moments
+        ds_totals = ds_mat.sum(axis=0, keepdims=True)
+        ds_props = np.where(ds_totals > 1e-10, ds_mat / ds_totals, 1.0 / P)
+        mp = ds_props.mean(axis=1)
+        vp = ds_props.var(axis=1, ddof=1)
+        valid = (mp > 1e-6) & (vp > 1e-10)
+        kappa = max(float(np.median(
+            mp[valid] * (1 - mp[valid]) / vp[valid] - 1
+        )), 0.0) if valid.sum() >= 2 else 1e6
+
+        # Dirichlet posterior mean per context
+        S_ctx = np.empty((C, P))
+        for c_val in range(C):
+            mask = (ds_ctx == c_val)
+            if mask.sum() == 0:
+                S_ctx[c_val] = S_global
+            else:
+                S_c = (kappa * S_global + ds_mat[:, mask].sum(axis=1)) / \
+                      max(kappa + ds_L[mask].sum(), 1e-10)
+                S_ctx[c_val] = S_c / max(S_c.sum(), 1e-10)
+
+        S_forecast = S_ctx[(n_complete + np.arange(m)) % C]
+        S_hist = S_ctx[np.arange(n_complete) % C]
+
+    # ── Box-Cox → NLinear (L already shifted positive) ──────────────────
     lam = _bc_lambda(L)
-    L_bc = _bc(L + 1, lam)
+    L_bc = _bc(L, lam)
     last_L = L_bc[-1]
     L_innov = L_bc - last_L
 
@@ -315,7 +364,6 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
     beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
 
     # ── Forecast Level ───────────────────────────────────────────────
-    m = int(np.ceil(horizon / P))
     L_ext = np.concatenate([L_innov, np.zeros(m)])
 
     for j in range(m):
@@ -332,31 +380,32 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
             x[nb + 1] = L_ext[ti - max_cp]
         L_ext[ti] = x @ beta
 
-    L_hat = np.maximum(_bc_inv(L_ext[n_complete : n_complete + m] + last_L, lam) - 1, 0.0)
+    L_hat = _bc_inv(L_ext[n_complete : n_complete + m] + last_L, lam)
 
-    # ── Reconstruct: Level × Shape ───────────────────────────────────
-    point_fc = np.maximum((L_hat[:, np.newaxis] * S).reshape(-1)[:horizon], 0.0)
+    # ── Reconstruct: Level × Shape, undo shift ────────────────────────
+    point_fc = (L_hat[:, np.newaxis] * S_forecast).reshape(-1)[:horizon] - y_shift
 
-    # ── LOO Conformal ────────────────────────────────────────────────
-    L_fitted = np.maximum(_bc_inv(L_innov[start:] - loo_resid + last_L, lam) - 1, 0.0)
+    # ── LOO Conformal (context-specific Shape for residuals) ──────────
+    L_fitted = _bc_inv(L_innov[start:] - loo_resid + last_L, lam)
     loo_orig = []
     for i in range(n_train):
         for j in range(P):
-            r = mat[j, start + i] - L_fitted[i] * S[j]
+            r = mat[j, start + i] - L_fitted[i] * S_hist[start + i, j]
             if np.isfinite(r):
                 loo_orig.append(r)
 
-    loo_orig = np.array(loo_orig) if loo_orig else np.array([-1, 0, 1]) * max(np.mean(point_fc) * 0.05, 1e-6)
+    loo_orig = np.array(loo_orig) if loo_orig else np.array([-1, 0, 1]) * max(abs(np.mean(point_fc)) * 0.05, 1e-6)
     if len(loo_orig) < 3:
-        loo_orig = np.array([-1, 0, 1]) * max(np.mean(point_fc) * 0.05, 1e-6)
+        loo_orig = np.array([-1, 0, 1]) * max(abs(np.mean(point_fc)) * 0.05, 1e-6)
 
     recent_loo = loo_orig[-min(200, len(loo_orig)):]
     drawn = np.random.choice(recent_loo, size=(n_samples, horizon), replace=True)
     jitter = np.random.normal(0, np.std(recent_loo) * 0.1, size=(n_samples, horizon))
-    samples = np.maximum(0, point_fc[np.newaxis, :] + drawn + jitter)
+    samples = point_fc[np.newaxis, :] + drawn + jitter
 
-    rm = np.max(y[-max(horizon * 2, 50):])
-    if rm > 0:
-        samples = np.clip(samples, 0, rm * 3)
+    y_orig = y - y_shift
+    y_lo, y_hi = y_orig[-max(horizon * 2, 50):].min(), y_orig[-max(horizon * 2, 50):].max()
+    y_range = max(y_hi - y_lo, 1e-6)
+    samples = np.clip(samples, y_lo - y_range, y_hi + y_range)
 
     return np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
