@@ -11,7 +11,10 @@ context derived from the secondary period structure (e.g., day-of-week
 for hourly data). When no secondary period exists, degenerates to
 the simple K-period average.
 
-One SVD. Zero hyperparameters. No neural network.
+When data has fewer than 3 complete periods, FLAIR degenerates to
+P=1 (Ridge on raw series) — no separate fallback model needed.
+
+One SVD. Zero hyperparameters. No neural network. One code path.
 
 Example:
     >>> from flair import flair_forecast
@@ -252,21 +255,23 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
     n = len(y)
     period = _get_period(freq)
     cal = _get_periods(freq)
-    P = cal[0] if cal else period
+    P = max(cal[0] if cal else period, 1)  # P >= 1 (P=1 = no reshape)
     secondary = cal[1:] if len(cal) > 1 else []
 
-    # Context limit
-    max_ctx = max(period * 10, 500) if period >= 2 else 500
-    if n > max_ctx:
-        y = y[-max_ctx:]
-        n = len(y)
+    n_complete = n // P
+    if n_complete < 3:
+        # Not enough complete periods — retry with P=1 (no reshape)
+        if P > 1:
+            P = 1
+            secondary = []
+            n_complete = n
+        if n_complete < 3:
+            fc = np.full(horizon, y[-1] - y_shift)
+            sigma = max(np.std(np.diff(y[-min(50, n):])), 1e-6) if n > 1 else 1.0
+            return np.clip(np.array([fc + np.random.normal(0, sigma, horizon)
+                                     for _ in range(n_samples)]),
+                           fc.mean() - sigma * 10, fc.mean() + sigma * 10)
 
-    # Fallback for non-periodic or insufficient data
-    n_complete = n // P if P >= 2 else 0
-    if P < 2 or n_complete < 3:
-        return _fallback_forecast(y, horizon, period, freq, n_samples)
-
-    # Allow more context for Level series (up to 500 periods)
     if n_complete > 500:
         y = y[-(500 * P):]
         n = len(y)
@@ -334,12 +339,22 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
     L_innov = L_bc - last_L
 
     # ── Cross-period features ────────────────────────────────────────
-    cross_periods = [sp // P for sp in secondary if 2 <= sp // P <= n_complete // 2]
+    cross_periods = []
+    for sp in secondary:
+        cp = sp // P if P >= 2 else sp
+        if 2 <= cp <= n_complete // 2:
+            cross_periods.append(cp)
+    if P == 1 and period >= 2 and period <= n_complete // 2:
+        cross_periods = sorted(set(cross_periods) | {period})
+
     max_cp = max(cross_periods) if cross_periods else 0
     start = max(1, max_cp) if max_cp >= 2 else 1
 
-    if n_complete <= start + 1:
-        return _fallback_forecast(y, horizon, period, freq, n_samples)
+    # Drop cross-period features if not enough training data
+    while n_complete - start < 3 and cross_periods:
+        cross_periods.pop()
+        max_cp = max(cross_periods) if cross_periods else 0
+        start = max(1, max_cp) if max_cp >= 2 else 1
 
     n_train = n_complete - start
     t = np.arange(n_complete, dtype=float)
