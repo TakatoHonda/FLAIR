@@ -42,7 +42,7 @@ point_forecast = samples.mean(axis=0)
 3. **Shape** = Dirichlet posterior mean per context (`context = period_index % C`, where `C = secondary/primary` period). Shrinks toward the global average when context-specific data is scarce
 4. **Level** = period totals → Box-Cox → NLinear → Ridge with soft-average GCV
 5. **Forecast** Level for `ceil(H/P)` future periods via recursive prediction
-6. **Reconstruct** `y_hat = Level_hat × Shape`, undo shift, and generate conformal prediction intervals
+6. **Reconstruct** `y_hat = Level_hat × Shape`, undo shift, and generate prediction intervals from the SVD residual matrix
 
 ## Benchmark Results
 
@@ -54,7 +54,7 @@ Baseline results from [autogluon/fev](https://github.com/autogluon/fev/tree/main
 
 | Model | Params | Agg. Rel. MASE | Agg. Rel. WQL | GPU |
 |-------|--------|:--------------:|:-------------:|:---:|
-| **FLAIR** | **~6** | **0.704** | 0.850 | **No** |
+| **FLAIR** | **~6** | **0.704** | 0.799 | **No** |
 | Chronos-Bolt-Base | 205M | 0.791 | **0.624** | Yes |
 | Moirai-Base | 311M | 0.812 | 0.637 | Yes |
 | Chronos-T5-Base | 200M | 0.816 | 0.642 | Yes |
@@ -71,7 +71,7 @@ Baseline results from [autogluon/fev](https://github.com/autogluon/fev/tree/main
 
 **FLAIR ranks #1 on point forecast accuracy (MASE) across all models** — including every Chronos variant (up to 710M params), Moirai, TimesFM, AutoARIMA, and AutoETS. No GPU. No pretraining. ~6 parameters per series.
 
-On probabilistic forecasting (WQL), Chronos models retain an advantage due to their learned quantile distributions vs. FLAIR's conformal intervals.
+On probabilistic forecasting (WQL), FLAIR uses **SVD Residual Quantiles**: the same rank-1 decomposition that produces the point forecast also produces the prediction intervals. The residual matrix E = M − σ₁u₁v₁ᵀ gives phase-specific uncertainty, combined with Ridge LOO residuals scaled by √(recursive step) for horizon-dependent fan-out. Chronos models still lead on WQL due to their end-to-end learned quantile distributions.
 
 ### GIFT-Eval Benchmark (97 configs, 23 datasets)
 
@@ -147,7 +147,7 @@ point_forecast = samples.mean(axis=0)
 3. **Shape**: コンテキスト別の Dirichlet 事後平均（`context = period_index % C`、`C = 副周期/主周期`）。データが少ないコンテキストでは全体平均に縮約
 4. **Level**: 周期合計 → Box-Cox → NLinear → ソフト平均GCV Ridge
 5. **予測**: Level を `ceil(H/P)` ステップ再帰予測
-6. **復元**: `y_hat = Level_hat × Shape`、シフトを戻し、LOO conformal 予測区間を生成
+6. **復元**: `y_hat = Level_hat × Shape`、シフトを戻し、SVD残差行列から予測区間を生成
 
 ## ベンチマーク結果
 
@@ -159,7 +159,7 @@ point_forecast = samples.mean(axis=0)
 
 | モデル | パラメータ数 | Agg. Rel. MASE | Agg. Rel. WQL | GPU |
 |-------|:----------:|:--------------:|:-------------:|:---:|
-| **FLAIR** | **~6** | **0.704** | 0.850 | **不要** |
+| **FLAIR** | **~6** | **0.704** | 0.799 | **不要** |
 | Chronos-Bolt-Base | 205M | 0.791 | **0.624** | 必要 |
 | Moirai-Base | 311M | 0.812 | 0.637 | 必要 |
 | Chronos-T5-Base | 200M | 0.816 | 0.642 | 必要 |
@@ -176,7 +176,7 @@ point_forecast = samples.mean(axis=0)
 
 **FLAIRは点予測精度（MASE）で全モデル中1位** — Chronos全バリアント（最大710Mパラメータ）、Moirai、TimesFM、AutoARIMA、AutoETSを上回る。GPU不要。事前学習不要。系列あたり約6パラメータ。
 
-確率予測（WQL）では、Chronosの学習済み分位点分布がFLAIRの conformal intervals より優位。
+確率予測（WQL）では、**SVD Residual Quantiles** を使用: 点予測を生むランク1分解と同じSVDから予測区間も導出。残差行列 E = M − σ₁u₁v₁ᵀ がPhase別の不確実性を与え、Ridge LOO残差 × √(再帰ステップ数) でホライズン依存のfan-outを実現。Chronosのエンドツーエンド学習済み分位点にはまだ及ばないが、設計の一貫性を保ちつつ改善中。
 
 ### GIFT-Eval ベンチマーク（97設定、23データセット）
 
