@@ -2,6 +2,8 @@
 
 **Factored Level And Interleaved Ridge** — a single-equation time series forecasting method.
 
+[日本語版はこちら](#flair-日本語)
+
 ## The Idea
 
 Reshape a time series by its primary period, then separate *what* (level) from *how* (shape):
@@ -13,6 +15,7 @@ y(phase, period) = Level(period) × Shape(phase)
 - **Level**: period totals, forecast by Ridge regression with soft-average GCV
 - **Shape**: within-period proportions via Dirichlet-Multinomial empirical Bayes, with context derived from the secondary period structure
 - **Location shift**: automatic handling of negative-valued series via shift-before-Box-Cox
+- **P=1 degeneration**: no separate fallback model — one unified code path for all series
 
 One SVD. Zero hyperparameters. No neural network.
 
@@ -35,7 +38,7 @@ point_forecast = samples.mean(axis=0)
 ## How It Works
 
 1. **Location shift**: shift all values to be positive (handles negative-valued series like temperature)
-2. **Reshape** the series by the primary calendar period (e.g., 24 for hourly)
+2. **Reshape** the series by the primary calendar period (e.g., 24 for hourly). If fewer than 3 complete periods, degenerate to P=1 (Ridge on raw series)
 3. **Shape** = Dirichlet posterior mean per context (`context = period_index % C`, where `C = secondary/primary` period). Shrinks toward the global average when context-specific data is scarce
 4. **Level** = period totals → Box-Cox → NLinear → Ridge with soft-average GCV
 5. **Forecast** Level for `ceil(H/P)` future periods via recursive prediction
@@ -47,14 +50,15 @@ point_forecast = samples.mean(axis=0)
 
 | Model | relMASE | relCRPS | GPU | Time |
 |-------|---------|---------|-----|------|
-| **FLAIR** | **0.920** | **0.690** | No | 29 min |
+| **FLAIR** | **0.915** | **0.690** | No | 29 min |
 | DLinear | 1.061 | 0.846 | Yes | — |
 | AutoARIMA | 1.074 | 0.912 | No | — |
 | AutoTheta | 1.090 | 1.244 | No | — |
+| MFLES | 1.405 | 1.015 | No | 578 min |
 | Prophet | 1.540 | 1.061 | No | 597 min |
 | SeasonalNaive | 1.000 | 1.000 | No | — |
 
-Per-horizon: short=0.900, medium=0.929, long=0.965 — beats SeasonalNaive on all horizons.
+Per-horizon: short=0.892, medium=0.929, long=0.965 — beats SeasonalNaive on all horizons.
 
 ## Citation
 
@@ -68,3 +72,65 @@ Per-horizon: short=0.900, medium=0.929, long=0.965 — beats SeasonalNaive on al
 ## License
 
 MIT
+
+---
+
+# FLAIR 日本語
+
+**Factored Level And Interleaved Ridge** — 1つの式で完結する時系列予測手法。
+
+## アイデア
+
+時系列を主周期でリシェイプし、「何が」（水準）と「どのように」（形状）を分離する:
+
+```
+y(phase, period) = Level(period) × Shape(phase)
+```
+
+- **Level**: 周期合計。ソフト平均GCV付きRidge回帰で予測
+- **Shape**: 周期内比率。Dirichlet-Multinomial経験ベイズにより、副周期構造から導出されたコンテキストごとに推定
+- **Location shift**: 負の値を含む系列を自動処理（Box-Cox前にシフト）
+- **P=1退化**: フォールバックモデル不要 — 全系列を1つのコードパスで処理
+
+SVD 1回。ハイパーパラメータ 0個。ニューラルネットワーク不要。
+
+## 使い方
+
+```python
+import numpy as np
+from flair import flair_forecast
+
+y = np.random.rand(500) * 100  # 時系列データ（負の値も可）
+samples = flair_forecast(y, horizon=24, freq='H')
+point_forecast = samples.mean(axis=0)
+```
+
+## 依存パッケージ
+
+- numpy
+- scipy
+
+## 仕組み
+
+1. **Location shift**: 全値を正にシフト（温度のような負値系列に対応）
+2. **リシェイプ**: 主周期でリシェイプ（例: 時間データ → P=24）。完全周期が3未満の場合、P=1に退化（生系列でRidge）
+3. **Shape**: コンテキスト別の Dirichlet 事後平均（`context = period_index % C`、`C = 副周期/主周期`）。データが少ないコンテキストでは全体平均に縮約
+4. **Level**: 周期合計 → Box-Cox → NLinear → ソフト平均GCV Ridge
+5. **予測**: Level を `ceil(H/P)` ステップ再帰予測
+6. **復元**: `y_hat = Level_hat × Shape`、シフトを戻し、LOO conformal 予測区間を生成
+
+## GIFT-Eval ベンチマーク結果
+
+97設定、23データセット、7ドメイン（[GIFT-Eval benchmark](https://huggingface.co/spaces/Salesforce/GIFT-Eval)）:
+
+| モデル | relMASE | relCRPS | GPU | 実行時間 |
+|-------|---------|---------|-----|---------|
+| **FLAIR** | **0.915** | **0.690** | 不要 | 29分 |
+| DLinear | 1.061 | 0.846 | 必要 | — |
+| AutoARIMA | 1.074 | 0.912 | 不要 | — |
+| AutoTheta | 1.090 | 1.244 | 不要 | — |
+| MFLES | 1.405 | 1.015 | 不要 | 578分 |
+| Prophet | 1.540 | 1.061 | 不要 | 597分 |
+| SeasonalNaive | 1.000 | 1.000 | 不要 | — |
+
+ホライズン別: short=0.892, medium=0.929, long=0.965 — 全ホライズンで SeasonalNaive を上回る。
