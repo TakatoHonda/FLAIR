@@ -255,12 +255,34 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
     n = len(y)
     period = _get_period(freq)
     cal = _get_periods(freq)
-    P = max(cal[0] if cal else period, 1)  # P >= 1 (P=1 = no reshape)
-    secondary = cal[1:] if len(cal) > 1 else []
+    candidates = [p for p in cal if p >= 1 and n // p >= 3] if cal else []
+    if not candidates:
+        candidates = [max(period, 1)] if n // max(period, 1) >= 3 else [1]
+
+    # ── MDL period selection: choose P that best supports rank-1 ──
+    if len(candidates) == 1:
+        P = candidates[0]
+    else:
+        T_max = min(n, 500 * min(candidates))
+        y_sel = y[-T_max:]
+        best_P, best_bic = candidates[0], np.inf
+        for p_cand in candidates:
+            nc = T_max // p_cand
+            if nc < 3:
+                continue
+            mat_c = y_sel[-(nc * p_cand):].reshape(nc, p_cand).T
+            s = np.linalg.svd(mat_c, compute_uv=False)
+            rss1 = float(np.sum(s[1:] ** 2))
+            T = nc * p_cand
+            bic = T * np.log(max(rss1 / T, 1e-30)) + (p_cand + nc - 1) * np.log(T)
+            if bic < best_bic:
+                best_P, best_bic = p_cand, bic
+        P = best_P
+
+    secondary = [p for p in cal if p != P and p > P] if cal else []
 
     n_complete = n // P
     if n_complete < 3:
-        # Not enough complete periods — retry with P=1 (no reshape)
         if P > 1:
             P = 1
             secondary = []
