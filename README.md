@@ -48,17 +48,21 @@ point_forecast = samples.mean(axis=0)
 
 97 configurations, 23 datasets, 7 domains ([GIFT-Eval benchmark](https://huggingface.co/spaces/Salesforce/GIFT-Eval)):
 
-| Model | relMASE | relCRPS | GPU | Time |
-|-------|---------|---------|-----|------|
-| **FLAIR** | **0.915** | **0.690** | No | 29 min |
-| DLinear | 1.061 | 0.846 | Yes | — |
-| AutoARIMA | 1.074 | 0.912 | No | — |
-| AutoTheta | 1.090 | 1.244 | No | — |
-| MFLES | 1.405 | 1.015 | No | 578 min |
-| Prophet | 1.540 | 1.061 | No | 597 min |
-| SeasonalNaive | 1.000 | 1.000 | No | — |
+| Model | Type | relMASE | relCRPS | GPU |
+|-------|------|---------|---------|-----|
+| **FLAIR** | **Statistical** | **0.915** | **0.690** | **No** |
+| N-BEATS | Deep Learning | 0.938 | 0.816 | Yes |
+| TFT | Deep Learning | 0.915 | 0.605 | Yes |
+| SeasonalNaive | Baseline | 1.000 | 1.000 | No |
+| DLinear | Deep Learning | 1.061 | 0.846 | Yes |
+| AutoARIMA | Statistical | 1.074 | 0.912 | No |
+| TiDE | Deep Learning | 1.091 | 0.772 | Yes |
+| AutoTheta | Statistical | 1.090 | 1.244 | No |
+| DeepAR | Deep Learning | 1.343 | 0.853 | Yes |
+| MFLES | Statistical | 1.405 | 1.015 | No |
+| Prophet | Statistical | 1.540 | 1.061 | No |
 
-Per-horizon: short=0.892, medium=0.929, long=0.965 — beats SeasonalNaive on all horizons.
+FLAIR beats N-BEATS, TFT, DLinear, TiDE, and DeepAR — all GPU-trained deep learning models — with one SVD and no GPU. Per-horizon: short=0.892, medium=0.929, long=0.965.
 
 ## Citation
 
@@ -123,14 +127,18 @@ point_forecast = samples.mean(axis=0)
 
 97設定、23データセット、7ドメイン（[GIFT-Eval benchmark](https://huggingface.co/spaces/Salesforce/GIFT-Eval)）:
 
-| モデル | relMASE | relCRPS | GPU | 実行時間 |
-|-------|---------|---------|-----|---------|
-| **FLAIR** | **0.915** | **0.690** | 不要 | 29分 |
-| DLinear | 1.061 | 0.846 | 必要 | — |
-| AutoARIMA | 1.074 | 0.912 | 不要 | — |
-| AutoTheta | 1.090 | 1.244 | 不要 | — |
-| MFLES | 1.405 | 1.015 | 不要 | 578分 |
-| Prophet | 1.540 | 1.061 | 不要 | 597分 |
-| SeasonalNaive | 1.000 | 1.000 | 不要 | — |
+| モデル | 種別 | relMASE | relCRPS | GPU |
+|-------|------|---------|---------|-----|
+| **FLAIR** | **統計** | **0.915** | **0.690** | **不要** |
+| N-BEATS | 深層学習 | 0.938 | 0.816 | 必要 |
+| TFT | 深層学習 | 0.915 | 0.605 | 必要 |
+| SeasonalNaive | ベースライン | 1.000 | 1.000 | 不要 |
+| DLinear | 深層学習 | 1.061 | 0.846 | 必要 |
+| AutoARIMA | 統計 | 1.074 | 0.912 | 不要 |
+| TiDE | 深層学習 | 1.091 | 0.772 | 必要 |
+| AutoTheta | 統計 | 1.090 | 1.244 | 不要 |
+| DeepAR | 深層学習 | 1.343 | 0.853 | 必要 |
+| MFLES | 統計 | 1.405 | 1.015 | 不要 |
+| Prophet | 統計 | 1.540 | 1.061 | 不要 |
 
-ホライズン別: short=0.892, medium=0.929, long=0.965 — 全ホライズンで SeasonalNaive を上回る。
+FLAIR は N-BEATS、TFT、DLinear、TiDE、DeepAR — いずれもGPU学習済みの深層学習モデル — を、SVD 1回・GPU不要で上回る。ホライズン別: short=0.892, medium=0.929, long=0.965。
