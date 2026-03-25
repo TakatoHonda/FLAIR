@@ -11,7 +11,7 @@ y(phase, period) = Level(period) × Shape(phase)
 ```
 
 - **Shape₁**: within-period proportions via Dirichlet-Multinomial empirical Bayes, with context from the secondary period
-- **Shape₂**: secondary periodicity in Level, handled by the same proportional decomposition — raw proportions shrunk toward the minimum-complexity harmonic via empirical Bayes
+- **Shape₂**: secondary periodicity in Level, handled by the same proportional decomposition — raw proportions shrunk toward a BIC-selected prior (first harmonic or flat) via empirical Bayes
 - **Level**: period totals, deseasonalized by Shape₂, forecast by Ridge with soft-average GCV
 - **Location shift**: automatic handling of negative-valued series
 - **P=1 degeneration**: no separate fallback model — one unified code path
@@ -40,7 +40,7 @@ point_forecast = samples.mean(axis=0)
 2. **Reshape** the series into a (P × n_complete) matrix
 3. **Shape₁** = Dirichlet posterior mean per context (`context = period_index % C`). Shrinks toward the global average when data is scarce
 4. **Level** = period totals
-5. **Shape₂** = secondary periodic pattern in Level, estimated as `w × raw + (1−w) × harmonic`, where `w = nc₂/(nc₂+cp)`. The harmonic prior is the MDL-optimal periodic function (single sinusoid). Level is deseasonalized by dividing by Shape₂
+5. **Shape₂** = secondary periodic pattern in Level, estimated as `w × raw + (1−w) × prior`, where `w = nc₂/(nc₂+cp)`. The prior is selected by BIC: first harmonic (2 params) when justified, flat (0 params) otherwise. Level is deseasonalized by dividing by Shape₂
 6. **Ridge** on deseasonalized Level: Box-Cox → NLinear → intercept + trend + lags → soft-average GCV
 7. **Forecast** Level for `⌈H/P⌉` steps, reseasonalize by Shape₂, reconstruct `ŷ = Level × Shape₁`
 8. **SVD Residual Quantiles** for prediction intervals: phase-specific noise from the residual matrix E = M − σ₁u₁v₁ᵀ, combined with Ridge LOO residuals × √step
@@ -95,7 +95,7 @@ FLAIR applies the **Minimum Description Length** principle at every scale:
 |-------|-----------|----------|
 | Period P | BIC on SVD spectrum | Select simplest rank-1 structure |
 | Shape₁ | Dirichlet shrinkage | Shrink to global average (simplest distribution) |
-| Shape₂ | Harmonic shrinkage | Shrink to first harmonic (simplest periodic function) |
+| Shape₂ | BIC-gated shrinkage | BIC selects prior: harmonic (2 params) vs flat (0 params) |
 | Ridge α | GCV soft-average | Select model complexity via cross-validation |
 
 ## Citation
