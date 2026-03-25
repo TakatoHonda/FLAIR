@@ -14,6 +14,10 @@ the simple K-period average.
 When data has fewer than 3 complete periods, FLAIR degenerates to
 P=1 (Ridge on raw series) — no separate fallback model needed.
 
+Prediction intervals via SVD Residual Quantiles: the residual matrix
+E = M − σ₁u₁v₁ᵀ gives phase-specific uncertainty, combined with
+Ridge LOO residuals scaled by √(recursive step) for horizon fan-out.
+
 One SVD. Zero hyperparameters. No neural network. One code path.
 
 Example:
@@ -422,23 +426,46 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
     # ── Reconstruct: Level × Shape, undo shift ────────────────────────
     point_fc = (L_hat[:, np.newaxis] * S_forecast).reshape(-1)[:horizon] - y_shift
 
-    # ── LOO Conformal (context-specific Shape for residuals) ──────────
+    # ── SVD Residual Quantiles ────────────────────────────────────────
+    # The same rank-1 structure that gives the forecast also gives the
+    # uncertainty.  σ₁u₁v₁ᵀ = signal, Σ_{k≥2} σₖuₖvₖᵀ = noise.
+
+    # Element 1: Phase-specific reconstruction noise from residual matrix
+    fitted_mat = S_hist.T * L  # (P, n_complete)
+    E = mat - fitted_mat        # what rank-1 cannot explain
+
+    K_r = min(50, n_complete)
+    E_r = E[:, -K_r:]
+    F_r = np.maximum(np.abs(fitted_mat[:, -K_r:]), 1e-8)
+    R = E_r / F_r  # (P, K_r): relative residuals per phase
+
+    # Element 2: Level forecast noise from Ridge LOO
     L_fitted = _bc_inv(L_innov[start:] - loo_resid + last_L, lam)
-    loo_orig = []
-    for i in range(n_train):
-        for j in range(P):
-            r = mat[j, start + i] - L_fitted[i] * S_hist[start + i, j]
-            if np.isfinite(r):
-                loo_orig.append(r)
+    L_actual = L[start:]
+    level_rel = (L_actual - L_fitted) / np.maximum(np.abs(L_fitted), 1e-8)
 
-    loo_orig = np.array(loo_orig) if loo_orig else np.array([-1, 0, 1]) * max(abs(np.mean(point_fc)) * 0.05, 1e-6)
-    if len(loo_orig) < 3:
-        loo_orig = np.array([-1, 0, 1]) * max(abs(np.mean(point_fc)) * 0.05, 1e-6)
+    # Vectorized sample generation
+    step_idx = np.arange(horizon) // P
+    phase_idx = np.arange(horizon) % P
 
-    recent_loo = loo_orig[-min(200, len(loo_orig)):]
-    drawn = np.random.choice(recent_loo, size=(n_samples, horizon), replace=True)
-    jitter = np.random.normal(0, np.std(recent_loo) * 0.1, size=(n_samples, horizon))
-    samples = point_fc[np.newaxis, :] + drawn + jitter
+    # Level noise: (n_samples, m), scaled by √step
+    level_noise = (np.random.choice(level_rel, size=(n_samples, m), replace=True)
+                   * np.sqrt(np.arange(1, m + 1))[np.newaxis, :])
+
+    # Phase noise: per-phase draws from R
+    R_flat = R.ravel()
+    raw_idx = np.random.randint(0, K_r, size=(n_samples, horizon))
+    phase_noise = R_flat[phase_idx[np.newaxis, :] * K_r + raw_idx]
+
+    # Assemble: Level × (1 + level_noise) × Shape × (1 + phase_noise)
+    L_hat_h = L_hat[step_idx]
+    S_h = S_forecast[step_idx, phase_idx]
+
+    samples = (L_hat_h[np.newaxis, :]
+               * (1 + level_noise[:, step_idx])
+               * S_h[np.newaxis, :]
+               * (1 + phase_noise)
+               - y_shift)
 
     y_orig = y - y_shift
     y_lo, y_hi = y_orig[-max(horizon * 2, 50):].min(), y_orig[-max(horizon * 2, 50):].max()
