@@ -13,9 +13,9 @@ the simple K-period average.
 
 Secondary periodicity in Level is handled by Shape₂ deseasonalization:
 the proportional decomposition is applied recursively, with the raw
-Shape₂ estimate shrunk toward its minimum-complexity periodic
-approximation (first harmonic) via empirical Bayes — the same MDL
-principle used for primary period selection.
+Shape₂ estimate shrunk toward a BIC-selected prior (first harmonic
+or flat) via empirical Bayes — the same MDL principle used for
+primary period selection.
 
 When data has fewer than 3 complete periods, FLAIR degenerates to
 P=1 (Ridge on raw series) — no separate fallback model needed.
@@ -142,7 +142,7 @@ def _ridge_sa(X, y):
     return beta, loo, gcv_min
 
 
-# ── Shape₂: Sinusoidal Prior Shrinkage ─────────────────────────────────
+# ── Shape₂: MDL-Gated Prior Shrinkage ──────────────────────────────────
 
 def _compute_shape2(L, cp, n_complete):
     """Shape₂ with MDL-gated empirical Bayes shrinkage.
@@ -193,100 +193,6 @@ def _compute_shape2(L, cp, n_complete):
     return S2
 
 
-# ── Fourier periods (for fallback) ──────────────────────────────────────
-
-def _fourier_periods(calendar_periods, T):
-    c = set()
-    for p in calendar_periods:
-        if p < 2:
-            continue
-        if p <= T // 2:
-            c.add(p)
-        if p * 2 <= T // 2:
-            c.add(p * 2)
-        if p // 2 >= 2:
-            c.add(p // 2)
-    return sorted(c)
-
-
-# ── Fallback: Fourier-Lag Ridge (for non-periodic series) ───────────────
-
-def _fallback_forecast(y, horizon, period, freq, n_samples):
-    """Ridge with Fourier + lag features. Used when reshape is not possible."""
-    n = len(y)
-    lam = _bc_lambda(y)
-    y_t = _bc(y + 1, lam)
-    periods = _fourier_periods(_get_periods(freq), n)
-    start = max(1, period) if period >= 2 else 1
-
-    if n <= start + horizon:
-        fc = np.full(horizon, y[-1])
-        sigma = max(np.std(np.diff(y[-min(50, n):])), 1e-6) if n > 1 else 1.0
-        return np.maximum(0, np.array([
-            fc + np.random.normal(0, sigma, horizon) for _ in range(n_samples)
-        ]))
-
-    # Features
-    t = np.arange(n, dtype=float)
-    trend = t / n
-    cols = [np.ones(n), trend]
-    for p in periods:
-        cols.append(np.cos(2 * np.pi * t / p))
-        cols.append(np.sin(2 * np.pi * t / p))
-    nb = len(cols)
-    base = np.column_stack(cols)
-    nf = nb + 1 + (1 if period >= 2 else 0)
-
-    X = np.zeros((n - start, nf))
-    X[:, :nb] = base[start:]
-    X[:, nb] = y_t[start - 1 : -1]
-    if period >= 2:
-        X[:, nb + 1] = y_t[start - period : n - period]
-
-    beta, loo_resid, _ = _ridge_sa(X, y_t[start:])
-
-    # Recursive forecast
-    y_ext = np.concatenate([y_t, np.zeros(horizon)])
-    for h in range(horizon):
-        ti = n + h
-        x = np.zeros(nf)
-        x[0], x[1] = 1.0, ti / n
-        col = 2
-        for p in periods:
-            x[col] = np.cos(2 * np.pi * ti / p)
-            x[col + 1] = np.sin(2 * np.pi * ti / p)
-            col += 2
-        x[nb] = y_ext[ti - 1]
-        if period >= 2:
-            x[nb + 1] = y_ext[ti - period]
-        y_ext[ti] = x @ beta
-
-    point = np.maximum(_bc_inv(y_ext[n:], lam) - 1, 0.0)
-    return _conformal_samples(point, loo_resid, y_t[start:], lam, y, n_samples, horizon)
-
-
-# ── Conformal sample generation ─────────────────────────────────────────
-
-def _conformal_samples(point_fc, loo_resid, y_train, lam, y_raw, n_samples, horizon):
-    fitted = y_train - loo_resid
-    loo_orig = _bc_inv(y_train, lam) - _bc_inv(fitted, lam)
-    loo_orig = loo_orig[np.isfinite(loo_orig)]
-
-    if len(loo_orig) < 3:
-        loo_orig = np.array([-1, 0, 1]) * max(np.mean(point_fc) * 0.05, 1e-6)
-
-    recent = loo_orig[-min(200, len(loo_orig)):]
-    drawn = np.random.choice(recent, size=(n_samples, horizon), replace=True)
-    jitter = np.random.normal(0, np.std(recent) * 0.1, size=(n_samples, horizon))
-    samples = np.maximum(0, point_fc[np.newaxis, :] + drawn + jitter)
-
-    rm = np.max(y_raw[-max(horizon * 2, 50):])
-    if rm > 0:
-        samples = np.clip(samples, 0, rm * 3)
-
-    return np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
-
-
 # ── FLAIR core ───────────────────────────────────────────────────────────
 
 def flair_forecast(y_raw, horizon, freq, n_samples=20):
@@ -309,7 +215,7 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
         Probabilistic forecast sample paths.
     """
     y = np.nan_to_num(np.asarray(y_raw, float), nan=0.0)
-    # Location shift: make all values positive for Box-Cox compatibility
+    # Location shift: make all values positive for multiplicative decomposition
     y_floor = y.min()
     y_shift = max(1 - y_floor, 1.0)  # shift so min(y) >= 1
     y = y + y_shift
