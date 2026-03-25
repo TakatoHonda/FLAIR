@@ -145,16 +145,14 @@ def _ridge_sa(X, y):
 # ── Shape₂: Sinusoidal Prior Shrinkage ─────────────────────────────────
 
 def _compute_shape2(L, cp, n_complete):
-    """Shape₂ with empirical Bayes shrinkage toward first harmonic.
+    """Shape₂ with MDL-gated empirical Bayes shrinkage.
 
-    Shape₂ = w × raw_proportions + (1-w) × harmonic_fit
+    Shape₂ = w × raw_proportions + (1-w) × prior
     w = nc₂ / (nc₂ + cp)
 
-    Same MDL principle as BIC period selection: the minimum-complexity
-    periodic function (single sinusoid, 2 parameters) serves as the prior.
-    When nc₂ is large, the raw proportions dominate (captures non-sinusoidal
-    patterns like weekday/weekend). When nc₂ is small, the harmonic prior
-    dominates (stable, low-variance).
+    The prior is selected by BIC (MDL): first harmonic (2 params) vs flat (0 params).
+    When the harmonic is not justified by data, the flat prior S₂=1 keeps
+    deseasonalization negligible — same MDL principle as BIC period selection.
     """
     nc2 = n_complete // cp
     if nc2 < 2:
@@ -170,7 +168,7 @@ def _compute_shape2(L, cp, n_complete):
         return None
     S2_raw = S2_raw / raw_mean
 
-    # First harmonic fit (MDL prior: simplest periodic function)
+    # First harmonic fit
     t = np.arange(cp, dtype=float)
     cos_b = np.cos(2 * np.pi * t / cp)
     sin_b = np.sin(2 * np.pi * t / cp)
@@ -179,9 +177,16 @@ def _compute_shape2(L, cp, n_complete):
     b = 2.0 * np.mean(S2_c * sin_b)
     S2_harmonic = 1.0 + a * cos_b + b * sin_b
 
+    # MDL gate: BIC selects harmonic (2 params) vs flat (0 params)
+    RSS_flat = np.sum(S2_c ** 2)
+    RSS_harmonic = np.sum((S2_raw - S2_harmonic) ** 2)
+    bic_flat = cp * np.log(max(RSS_flat / cp, 1e-30))
+    bic_harmonic = cp * np.log(max(RSS_harmonic / cp, 1e-30)) + 2 * np.log(cp)
+    S2_prior = S2_harmonic if bic_harmonic < bic_flat else np.ones(cp)
+
     # Empirical Bayes weight
     w = nc2 / (nc2 + cp)
-    S2 = w * S2_raw + (1 - w) * S2_harmonic
+    S2 = w * S2_raw + (1 - w) * S2_prior
 
     S2 = np.maximum(S2, 1e-6)
     S2 = S2 / S2.mean()
