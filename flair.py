@@ -11,6 +11,12 @@ context derived from the secondary period structure (e.g., day-of-week
 for hourly data). When no secondary period exists, degenerates to
 the simple K-period average.
 
+Secondary periodicity in Level is handled by Shape₂ deseasonalization:
+the proportional decomposition is applied recursively, with the raw
+Shape₂ estimate shrunk toward its minimum-complexity periodic
+approximation (first harmonic) via empirical Bayes — the same MDL
+principle used for primary period selection.
+
 When data has fewer than 3 complete periods, FLAIR degenerates to
 P=1 (Ridge on raw series) — no separate fallback model needed.
 
@@ -134,6 +140,52 @@ def _ridge_sa(X, y):
     loo = residuals / np.maximum(1 - h_avg, 1e-10)
 
     return beta, loo, gcv_min
+
+
+# ── Shape₂: Sinusoidal Prior Shrinkage ─────────────────────────────────
+
+def _compute_shape2(L, cp, n_complete):
+    """Shape₂ with empirical Bayes shrinkage toward first harmonic.
+
+    Shape₂ = w × raw_proportions + (1-w) × harmonic_fit
+    w = nc₂ / (nc₂ + cp)
+
+    Same MDL principle as BIC period selection: the minimum-complexity
+    periodic function (single sinusoid, 2 parameters) serves as the prior.
+    When nc₂ is large, the raw proportions dominate (captures non-sinusoidal
+    patterns like weekday/weekend). When nc₂ is small, the harmonic prior
+    dominates (stable, low-variance).
+    """
+    nc2 = n_complete // cp
+    if nc2 < 2:
+        return None
+
+    pos = np.arange(n_complete) % cp
+    S2_raw = np.zeros(cp)
+    for d in range(cp):
+        vals = L[pos == d]
+        S2_raw[d] = vals.mean() if len(vals) > 0 else 1.0
+    raw_mean = S2_raw.mean()
+    if raw_mean < 1e-10:
+        return None
+    S2_raw = S2_raw / raw_mean
+
+    # First harmonic fit (MDL prior: simplest periodic function)
+    t = np.arange(cp, dtype=float)
+    cos_b = np.cos(2 * np.pi * t / cp)
+    sin_b = np.sin(2 * np.pi * t / cp)
+    S2_c = S2_raw - 1.0
+    a = 2.0 * np.mean(S2_c * cos_b)
+    b = 2.0 * np.mean(S2_c * sin_b)
+    S2_harmonic = 1.0 + a * cos_b + b * sin_b
+
+    # Empirical Bayes weight
+    w = nc2 / (nc2 + cp)
+    S2 = w * S2_raw + (1 - w) * S2_harmonic
+
+    S2 = np.maximum(S2, 1e-6)
+    S2 = S2 / S2.mean()
+    return S2
 
 
 # ── Fourier periods (for fallback) ──────────────────────────────────────
@@ -358,13 +410,7 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
         S_forecast = S_ctx[(n_complete + np.arange(m)) % C]
         S_hist = S_ctx[np.arange(n_complete) % C]
 
-    # ── Box-Cox → NLinear (L already shifted positive) ──────────────────
-    lam = _bc_lambda(L)
-    L_bc = _bc(L, lam)
-    last_L = L_bc[-1]
-    L_innov = L_bc - last_L
-
-    # ── Cross-period features ────────────────────────────────────────
+    # ── Cross-period computation ──────────────────────────────────────
     cross_periods = []
     for sp in secondary:
         cp = sp // P if P >= 2 else sp
@@ -374,21 +420,38 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
         cross_periods = sorted(set(cross_periods) | {period})
 
     max_cp = max(cross_periods) if cross_periods else 0
-    start = max(1, max_cp) if max_cp >= 2 else 1
 
-    # Drop cross-period features if not enough training data
-    while n_complete - start < 3 and cross_periods:
-        cross_periods.pop()
-        max_cp = max(cross_periods) if cross_periods else 0
-        start = max(1, max_cp) if max_cp >= 2 else 1
+    # ── Shape₂: deseasonalize Level at secondary period ───────────────
+    cp_main = cross_periods[0] if cross_periods else 0
+    S2 = None
+    use_deseason = False
+    if cp_main >= 2:
+        S2 = _compute_shape2(L, cp_main, n_complete)
+        if S2 is not None:
+            use_deseason = True
+
+    if use_deseason:
+        pos = np.arange(n_complete) % cp_main
+        L_work = L / np.maximum(S2[pos], 1e-10)
+    else:
+        L_work = L
+
+    # ── Box-Cox → NLinear on (deseasonalized) Level ───────────────────
+    lam = _bc_lambda(L_work)
+    L_bc = _bc(L_work, lam)
+    last_L = L_bc[-1]
+    L_innov = L_bc - last_L
+
+    # ── Ridge features: intercept + trend + lags (no Fourier) ─────────
+    start = max(1, max_cp) if max_cp >= 2 else 1
+    if n_complete - start < 3 and max_cp >= 2:
+        max_cp = 0
+        start = 1
 
     n_train = n_complete - start
     t = np.arange(n_complete, dtype=float)
     trend = t / n_complete
     cols = [np.ones(n_complete), trend]
-    for cp in cross_periods:
-        cols.append(np.cos(2 * np.pi * t / cp))
-        cols.append(np.sin(2 * np.pi * t / cp))
     nb = len(cols)
     base = np.column_stack(cols)
 
@@ -411,36 +474,38 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
         ti = n_complete + j
         x = np.zeros(nf)
         x[0], x[1] = 1.0, ti / n_complete
-        col = 2
-        for cp in cross_periods:
-            x[col] = np.cos(2 * np.pi * ti / cp)
-            x[col + 1] = np.sin(2 * np.pi * ti / cp)
-            col += 2
         x[nb] = L_ext[ti - 1]
         if max_cp >= 2:
             x[nb + 1] = L_ext[ti - max_cp]
         L_ext[ti] = x @ beta
 
-    L_hat = _bc_inv(L_ext[n_complete : n_complete + m] + last_L, lam)
+    L_hat_raw = _bc_inv(L_ext[n_complete : n_complete + m] + last_L, lam)
+
+    # Reseasonalize if deseasonalized
+    if use_deseason:
+        forecast_pos = (n_complete + np.arange(m)) % cp_main
+        L_hat = L_hat_raw * S2[forecast_pos]
+    else:
+        L_hat = L_hat_raw
 
     # ── Reconstruct: Level × Shape, undo shift ────────────────────────
     point_fc = (L_hat[:, np.newaxis] * S_forecast).reshape(-1)[:horizon] - y_shift
 
     # ── SVD Residual Quantiles ────────────────────────────────────────
-    # The same rank-1 structure that gives the forecast also gives the
-    # uncertainty.  σ₁u₁v₁ᵀ = signal, Σ_{k≥2} σₖuₖvₖᵀ = noise.
-
-    # Element 1: Phase-specific reconstruction noise from residual matrix
-    fitted_mat = S_hist.T * L  # (P, n_complete)
-    E = mat - fitted_mat        # what rank-1 cannot explain
+    fitted_mat = S_hist.T * L
+    E = mat - fitted_mat
 
     K_r = min(50, n_complete)
     E_r = E[:, -K_r:]
     F_r = np.maximum(np.abs(fitted_mat[:, -K_r:]), 1e-8)
-    R = E_r / F_r  # (P, K_r): relative residuals per phase
+    R = E_r / F_r
 
-    # Element 2: Level forecast noise from Ridge LOO
-    L_fitted = _bc_inv(L_innov[start:] - loo_resid + last_L, lam)
+    # Level forecast noise from Ridge LOO (reseasonalize if needed)
+    if use_deseason:
+        pos_hist = np.arange(start, n_complete) % cp_main
+        L_fitted = _bc_inv(L_innov[start:] - loo_resid + last_L, lam) * S2[pos_hist]
+    else:
+        L_fitted = _bc_inv(L_innov[start:] - loo_resid + last_L, lam)
     L_actual = L[start:]
     level_rel = (L_actual - L_fitted) / np.maximum(np.abs(L_fitted), 1e-8)
 
