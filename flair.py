@@ -195,7 +195,7 @@ def _compute_shape2(L, cp, n_complete):
 
 # ── FLAIR core ───────────────────────────────────────────────────────────
 
-def flair_forecast(y_raw, horizon, freq, n_samples=20):
+def flair_forecast(y_raw, horizon, freq, n_samples=200):
     """FLAIR: Factored Level And Interleaved Ridge.
 
     Parameters
