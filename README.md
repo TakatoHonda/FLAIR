@@ -47,9 +47,9 @@ point_forecast = samples.mean(axis=0)
 
 ## Benchmark Results
 
-### Chronos Benchmark II (25 zero-shot datasets)
+### Chronos Benchmark II / Monash (25 zero-shot datasets)
 
-Evaluated on the same protocol as [Chronos](https://github.com/amazon-science/chronos-forecasting) (Ansari et al., 2024). Agg. Relative Score = geometric mean of (method / Seasonal Naive) per dataset. Lower is better.
+Evaluated on the [Chronos](https://github.com/amazon-science/chronos-forecasting) Benchmark II protocol (Ansari et al., 2024). The 25 datasets are primarily from the [Monash Time Series Forecasting Archive](https://forecastingdata.org/) (Godahewa et al., NeurIPS 2021) plus M4, M5, and others. Agg. Relative Score = geometric mean of (method / Seasonal Naive) per dataset. Lower is better.
 
 All scores computed on the same 25 datasets. Baseline results from [autogluon/fev](https://github.com/autogluon/fev/tree/main/benchmarks/chronos_zeroshot/results) and [amazon-science/chronos-forecasting](https://github.com/amazon-science/chronos-forecasting/tree/main/scripts/evaluation/results). Deep Learning baselines from Chronos paper Figure 5.
 
@@ -92,6 +92,27 @@ All scores computed on the same 25 datasets. Baseline results from [autogluon/fe
 | SeasonalNaive | Baseline | 1.000 | 1.000 | No |
 | AutoARIMA | Statistical | 1.074 | 0.912 | No |
 | Prophet | Statistical | 1.540 | 1.061 | No |
+
+### Long-term Forecasting Benchmark (8 datasets)
+
+Standard benchmark used by PatchTST, iTransformer, DLinear, Autoformer, etc. Channel-independent (univariate) evaluation. Metrics: MSE on StandardScaler-normalized data. Prediction horizons: {96, 192, 336, 720}.
+
+Average MSE across all 4 horizons:
+
+| Dataset | FLAIR | iTransformer | PatchTST | DLinear | GPU needed |
+|---------|:-----:|:------------:|:--------:|:-------:|:----------:|
+| **ETTh2** | **0.366** | 0.383 | 0.387 | 0.559 | **No** |
+| **ETTm2** | **0.257** | 0.288 | 0.281 | 0.350 | **No** |
+| **Weather** | **0.248** | 0.258 | 0.259 | 0.265 | **No** |
+| ECL | 0.215 | **0.178** | 0.205 | 0.212 | Yes |
+| Traffic | 0.434 | **0.428** | 0.481 | 0.625 | Yes |
+| ETTh1 | 0.591 | **0.454** | 0.469 | 0.456 | Yes |
+| ETTm1 | 0.511 | 0.407 | **0.387** | 0.403 | Yes |
+| Exchange | 0.815 | 0.360 | 0.366 | **0.354** | Yes |
+
+FLAIR wins **3/8 datasets** (ETTh2, ETTm2, Weather) and **11/32 individual settings** against GPU-trained Transformers — with zero training, zero hyperparameters, and CPU only. FLAIR is strongest on datasets with clear periodicity; weaker on non-periodic series (Exchange) where the Level × Shape decomposition provides no compression.
+
+Baseline numbers from the [iTransformer paper](https://arxiv.org/abs/2310.06625) (ICLR 2024).
 
 ## Design Principles
 
