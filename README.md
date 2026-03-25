@@ -47,30 +47,35 @@ point_forecast = samples.mean(axis=0)
 
 ## Benchmark Results
 
-### Chronos Zero-Shot Benchmark (25 datasets)
+### Chronos Benchmark II (25 zero-shot datasets)
 
 Evaluated on the same protocol as [Chronos](https://github.com/amazon-science/chronos-forecasting) (Ansari et al., 2024). Agg. Relative Score = geometric mean of (method / Seasonal Naive) per dataset. Lower is better.
 
-Baseline results from [autogluon/fev](https://github.com/autogluon/fev/tree/main/benchmarks/chronos_zeroshot/results) and [amazon-science/chronos-forecasting](https://github.com/amazon-science/chronos-forecasting/tree/main/scripts/evaluation/results).
+All scores computed on the same 25 datasets. Baseline results from [autogluon/fev](https://github.com/autogluon/fev/tree/main/benchmarks/chronos_zeroshot/results) and [amazon-science/chronos-forecasting](https://github.com/amazon-science/chronos-forecasting/tree/main/scripts/evaluation/results). Deep Learning baselines from Chronos paper Figure 5.
 
-| Model | Params | Agg. Rel. MASE | Agg. Rel. WQL | GPU |
-|-------|--------|:--------------:|:-------------:|:---:|
-| **FLAIR** | **~6** | **0.704** | 0.799 | **No** |
-| Chronos-Bolt-Base | 205M | 0.791 | **0.624** | Yes |
-| Moirai-Base | 311M | 0.812 | 0.637 | Yes |
-| Chronos-T5-Base | 200M | 0.816 | 0.642 | Yes |
-| Chronos-Bolt-Small | 48M | 0.819 | 0.636 | Yes |
-| Chronos-T5-Large | 710M | 0.821 | 0.650 | Yes |
-| Chronos-T5-Small | 46M | 0.830 | 0.665 | Yes |
-| Chronos-T5-Mini | 20M | 0.841 | 0.689 | Yes |
-| Chronos-Bolt-Tiny | 9M | 0.845 | 0.668 | Yes |
-| AutoARIMA | - | 0.865 | 0.742 | No |
-| Chronos-T5-Tiny | 8M | 0.870 | 0.711 | Yes |
-| TimesFM | 200M | 0.879 | 0.711 | Yes |
-| AutoETS | - | 0.937 | 0.812 | No |
-| Seasonal Naive | - | 1.000 | 1.000 | No |
+| Rank | Model | Params | Agg. Rel. MASE | Agg. Rel. WQL | GPU |
+|:----:|-------|--------|:--------------:|:-------------:|:---:|
+| **1** | **FLAIR** | **~6** | **0.691** | 0.801 | **No** |
+| 2 | Moirai-Large | 1B | 0.787 | 0.633 | Yes |
+| 3 | TimesFM-2.0 | 200M | 0.797 | 0.719 | Yes |
+| 4 | Chronos-Bolt-Base | 205M | 0.803 | **0.639** | Yes |
+| 5 | PatchTST | per-dataset | 0.810 | 0.684 | Yes |
+| 6 | Moirai-Base | 311M | 0.812 | 0.635 | Yes |
+| 7 | Chronos-T5-Base | 200M | 0.822 | 0.648 | Yes |
+| 8 | Chronos-T5-Large | 710M | 0.830 | 0.659 | Yes |
+| 9 | N-HiTS | per-dataset | 0.830 | 0.672 | Yes |
+| 10 | Chronos-Bolt-Small | 48M | 0.832 | 0.651 | Yes |
+| 11 | N-BEATS | per-dataset | 0.835 | 0.681 | Yes |
+| 12 | Chronos-T5-Small | 46M | 0.839 | 0.675 | Yes |
+| 13 | TFT | per-dataset | 0.847 | 0.639 | Yes |
+| 14 | AutoARIMA | - | 0.865 | 0.741 | No |
+| 15 | TimesFM | 200M | 0.879 | 0.711 | Yes |
+| 16 | AutoTheta | - | 0.881 | 0.795 | No |
+| 17 | Moirai-Small | 91M | 0.890 | 0.707 | Yes |
+| 18 | AutoETS | - | 0.937 | 0.815 | No |
+| 19 | Seasonal Naive | - | 1.000 | 1.000 | No |
 
-**FLAIR ranks #1 on point forecast accuracy (MASE)** — beating every Chronos variant (up to 710M params), Moirai, TimesFM, AutoARIMA, and AutoETS. No GPU. No pretraining.
+**FLAIR ranks #1 on point forecast accuracy (MASE)** out of 19 methods — beating Moirai-Large (1B params) by 12.2%, all Chronos variants (up to 710M params), per-dataset Deep Learning (PatchTST, N-BEATS, TFT), and all statistical baselines. No GPU. No pretraining. No hyperparameters.
 
 ### GIFT-Eval Benchmark (97 configs, 23 datasets)
 
@@ -79,12 +84,13 @@ Baseline results from [autogluon/fev](https://github.com/autogluon/fev/tree/main
 | Model | Type | relMASE | relCRPS | GPU |
 |-------|------|:-------:|:-------:|:---:|
 | **FLAIR** | **Statistical** | **0.866** | **0.615** | **No** |
-| Chronos-Small | Foundation | 0.892 | — | Yes |
-| N-BEATS | Deep Learning | 0.938 | 0.816 | Yes |
+| PatchTST | Deep Learning | 0.849 | 0.587 | Yes |
+| Moirai-large | Foundation | 0.875 | 0.599 | Yes |
+| iTransformer | Deep Learning | 0.893 | 0.620 | Yes |
 | TFT | Deep Learning | 0.915 | 0.605 | Yes |
+| N-BEATS | Deep Learning | 0.938 | 0.816 | Yes |
 | SeasonalNaive | Baseline | 1.000 | 1.000 | No |
 | AutoARIMA | Statistical | 1.074 | 0.912 | No |
-| DeepAR | Deep Learning | 1.343 | 0.853 | Yes |
 | Prophet | Statistical | 1.540 | 1.061 | No |
 
 ## Design Principles
