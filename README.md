@@ -42,8 +42,8 @@ point_forecast = samples.mean(axis=0)
 4. **Level** = period totals
 5. **Shape₂** = secondary periodic pattern in Level, estimated as `w × raw + (1−w) × prior`, where `w = nc₂/(nc₂+cp)`. The prior is selected by BIC: first harmonic (2 params) when justified, flat (0 params) otherwise. Level is deseasonalized by dividing by Shape₂
 6. **Ridge** on deseasonalized Level: Box-Cox → NLinear → intercept + trend + lags → soft-average GCV
-7. **Forecast** Level for `⌈H/P⌉` steps, reseasonalize by Shape₂, reconstruct `ŷ = Level × Shape₁`
-8. **SVD Residual Quantiles** for prediction intervals: phase-specific noise from the residual matrix E = M − σ₁u₁v₁ᵀ, combined with Ridge LOO residuals × √step
+7. **Stochastic Level paths**: LOO residuals are injected into the recursive forecast — errors propagate through the Ridge lag dynamics naturally. Mean-reverting series saturate; random-walk series grow as √step. No scaling formula needed
+8. **Phase noise** from SVD Residual Quantiles: E = M − fitted gives phase-specific relative noise. Combined with Level paths: `sample = Level_path × Shape₁ × (1 + phase_noise)`
 
 ## Benchmark Results
 
@@ -78,7 +78,7 @@ Baseline results from [autogluon/fev](https://github.com/autogluon/fev/tree/main
 
 | Model | Type | relMASE | relCRPS | GPU |
 |-------|------|:-------:|:-------:|:---:|
-| **FLAIR** | **Statistical** | **0.874** | **0.639** | **No** |
+| **FLAIR** | **Statistical** | **0.866** | **0.615** | **No** |
 | Chronos-Small | Foundation | 0.892 | — | Yes |
 | N-BEATS | Deep Learning | 0.938 | 0.816 | Yes |
 | TFT | Deep Learning | 0.915 | 0.605 | Yes |

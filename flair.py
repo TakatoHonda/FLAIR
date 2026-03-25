@@ -378,67 +378,51 @@ def flair_forecast(y_raw, horizon, freq, n_samples=20):
     # ── One Ridge SA ─────────────────────────────────────────────────
     beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
 
-    # ── Forecast Level ───────────────────────────────────────────────
-    L_ext = np.concatenate([L_innov, np.zeros(m)])
+    # ── Stochastic Level paths (recursive noise injection) ────────────
+    # The same recursion as the point forecast, but with LOO residual
+    # noise injected at each step.  Errors propagate through the lag
+    # features exactly as the Ridge dynamics dictate — no √step, no
+    # scaling formula.  Mean-reverting series naturally saturate;
+    # random-walk series naturally grow as √step.
+    noise_pool = loo_resid[np.random.randint(0, len(loo_resid),
+                                             size=(n_samples, m))]
+    L_paths = np.column_stack([
+        np.tile(L_innov, (n_samples, 1)),
+        np.zeros((n_samples, m))
+    ])  # (n_samples, n_complete + m)
 
     for j in range(m):
         ti = n_complete + j
-        x = np.zeros(nf)
-        x[0], x[1] = 1.0, ti / n_complete
-        x[nb] = L_ext[ti - 1]
+        pred = beta[0] + beta[1] * (ti / n_complete) \
+             + beta[nb] * L_paths[:, ti - 1]
         if max_cp >= 2:
-            x[nb + 1] = L_ext[ti - max_cp]
-        L_ext[ti] = x @ beta
+            pred += beta[nb + 1] * L_paths[:, ti - max_cp]
+        L_paths[:, ti] = pred + noise_pool[:, j]
 
-    L_hat_raw = _bc_inv(L_ext[n_complete : n_complete + m] + last_L, lam)
+    # Point forecast = median path (noise_pool row 0 is arbitrary, use mean)
+    L_hat_all = _bc_inv(L_paths[:, n_complete:n_complete + m] + last_L, lam)
 
-    # Reseasonalize if deseasonalized
     if use_deseason:
         forecast_pos = (n_complete + np.arange(m)) % cp_main
-        L_hat = L_hat_raw * S2[forecast_pos]
-    else:
-        L_hat = L_hat_raw
+        L_hat_all = L_hat_all * S2[forecast_pos][np.newaxis, :]
 
-    # ── Reconstruct: Level × Shape, undo shift ────────────────────────
-    point_fc = (L_hat[:, np.newaxis] * S_forecast).reshape(-1)[:horizon] - y_shift
-
-    # ── SVD Residual Quantiles ────────────────────────────────────────
+    # ── Phase noise (SVD Residual Quantiles, unchanged) ─────────────
     fitted_mat = S_hist.T * L
     E = mat - fitted_mat
-
     K_r = min(50, n_complete)
-    E_r = E[:, -K_r:]
-    F_r = np.maximum(np.abs(fitted_mat[:, -K_r:]), 1e-8)
-    R = E_r / F_r
+    R = E[:, -K_r:] / np.maximum(np.abs(fitted_mat[:, -K_r:]), 1e-8)
 
-    # Level forecast noise from Ridge LOO (reseasonalize if needed)
-    if use_deseason:
-        pos_hist = np.arange(start, n_complete) % cp_main
-        L_fitted = _bc_inv(L_innov[start:] - loo_resid + last_L, lam) * S2[pos_hist]
-    else:
-        L_fitted = _bc_inv(L_innov[start:] - loo_resid + last_L, lam)
-    L_actual = L[start:]
-    level_rel = (L_actual - L_fitted) / np.maximum(np.abs(L_fitted), 1e-8)
-
-    # Vectorized sample generation
     step_idx = np.arange(horizon) // P
     phase_idx = np.arange(horizon) % P
 
-    # Level noise: (n_samples, m), scaled by √step
-    level_noise = (np.random.choice(level_rel, size=(n_samples, m), replace=True)
-                   * np.sqrt(np.arange(1, m + 1))[np.newaxis, :])
-
-    # Phase noise: per-phase draws from R
     R_flat = R.ravel()
     raw_idx = np.random.randint(0, K_r, size=(n_samples, horizon))
     phase_noise = R_flat[phase_idx[np.newaxis, :] * K_r + raw_idx]
 
-    # Assemble: Level × (1 + level_noise) × Shape × (1 + phase_noise)
-    L_hat_h = L_hat[step_idx]
+    # ── Assemble: Level_path × Shape × (1 + phase_noise) ───────────
     S_h = S_forecast[step_idx, phase_idx]
 
-    samples = (L_hat_h[np.newaxis, :]
-               * (1 + level_noise[:, step_idx])
+    samples = (L_hat_all[:, step_idx]
                * S_h[np.newaxis, :]
                * (1 + phase_noise)
                - y_shift)
