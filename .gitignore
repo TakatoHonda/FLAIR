@@ -1,10 +1,6 @@
-# ===== Research (private) =====
-research/
-results/
+# ===== Large data (not tracked on any branch) =====
 data/
 longhorizon/
-docs/
-CLAUDE.md
 
 # ===== Build / Environment =====
 __pycache__/
@@ -12,8 +8,6 @@ __pycache__/
 .ipynb_checkpoints/
 .venv/
 uv.lock
-pyproject.toml
-.python-version
 
 # ===== OS =====
 .DS_Store
