@@ -1,4 +1,19 @@
-# CompCast Research — FLAIR
+# FLAIR
+
+## Git ワークフロー
+
+| ブランチ | 用途 | push |
+|---|---|---|
+| `main` | 公開用（flair.py, README, LICENSE のみ） | origin に push OK |
+| `dev` | 日常作業（研究スクリプト、結果、ドキュメント全て追跡） | push しない |
+| `research-archive` | 旧 CompCast-research の履歴（凍結） | push しない |
+
+### ルール
+- **普段の作業は `dev` ブランチで行う**（研究の進捗はここにコミット）
+- `flair.py` の公開更新時のみ `main` にチェックアウトしてマージ → push
+- `main` に直接 research/ や docs/ をコミットしない
+- `main` の .gitignore は研究ファイルを除外済み
+- `dev` の .gitignore は data/ と longhorizon/ のみ除外（大容量データ）
 
 ## FLAIR概要
 - **Factored Level And Interleaved Ridge**: 周期時系列を Level × Shape に分解し、Level を Ridge で予測
