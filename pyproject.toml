@@ -1,0 +1,13 @@
+[project]
+name = "flair-forecast"
+version = "0.1.0"
+description = "FLAIR: Factored Level And Interleaved Ridge — zero-hyperparameter time series forecasting"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "salesforce-gift-eval @ git+https://github.com/SalesforceAIResearch/gift-eval.git",
+    "datasetsforecast>=1.0.1",
+]
