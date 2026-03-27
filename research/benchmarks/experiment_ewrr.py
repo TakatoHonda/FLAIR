@@ -1,0 +1,405 @@
+#!/usr/bin/env python3
+"""Experiment: Exponentially Weighted Ridge Regression (EWRR).
+
+Principle (Luxenberg & Boyd 2024):
+  Recent Level observations carry more predictive information than old ones.
+  EWRR applies exponential decay weights to Ridge features/targets:
+
+      W[i] = beta^(n-1-i)    (most recent = 1.0)
+      X_w = X * sqrt(W),  y_w = y * sqrt(W)
+      beta_hat = Ridge(X_w, y_w)  — closed form preserved
+
+  Half-life H = n_complete/2  →  beta = 2^(-2/n)
+  No hyperparameters: H is set relative to data length.
+
+  This is the ONLY change vs flair_ds(). Everything else is identical.
+
+Usage:
+  uv run python -u research/benchmarks/experiment_ewrr.py
+"""
+
+import os, sys, time, warnings
+import numpy as np
+import pandas as pd
+
+os.environ['GIFT_EVAL'] = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data', 'gift-eval')
+
+from gift_eval.data import Dataset
+from gluonts.model.forecast import SampleForecast
+from gluonts.model.predictor import RepresentablePredictor
+from gluonts.model import evaluate_model
+from gluonts.ev.metrics import MASE, MeanWeightedSumQuantileLoss
+
+from run_gift_eval_flar9 import (
+    get_period, get_periods, FREQ_TO_PERIOD, FREQ_TO_PERIODS,
+    _bc_lambda, _bc, _bc_inv, _ridge_gcv_loo_softavg,
+    _multi_fourier_periods,
+    Predictor, METRICS, CONFIGS, _get_sn, run_variant,
+)
+
+warnings.filterwarnings('ignore')
+
+
+# =========================================================================
+# Shape₂ (verbatim)
+# =========================================================================
+
+def _compute_shape2(L, cp, n_complete):
+    nc2 = n_complete // cp
+    if nc2 < 2:
+        return None
+    pos = np.arange(n_complete) % cp
+    S2_raw = np.zeros(cp)
+    for d in range(cp):
+        vals = L[pos == d]
+        S2_raw[d] = vals.mean() if len(vals) > 0 else 1.0
+    raw_mean = S2_raw.mean()
+    if raw_mean < 1e-10:
+        return None
+    S2_raw = S2_raw / raw_mean
+    t = np.arange(cp, dtype=float)
+    cos_b = np.cos(2 * np.pi * t / cp)
+    sin_b = np.sin(2 * np.pi * t / cp)
+    S2_c = S2_raw - 1.0
+    a = 2.0 * np.mean(S2_c * cos_b)
+    b = 2.0 * np.mean(S2_c * sin_b)
+    S2_harmonic = 1.0 + a * cos_b + b * sin_b
+    RSS_flat = np.sum(S2_c ** 2)
+    RSS_harmonic = np.sum((S2_raw - S2_harmonic) ** 2)
+    bic_flat = cp * np.log(max(RSS_flat / cp, 1e-30))
+    bic_harmonic = cp * np.log(max(RSS_harmonic / cp, 1e-30)) + 2 * np.log(cp)
+    S2_prior = S2_harmonic if bic_harmonic < bic_flat else np.ones(cp)
+    w = nc2 / (nc2 + cp)
+    S2 = w * S2_raw + (1 - w) * S2_prior
+    S2 = np.maximum(S2, 1e-6)
+    S2 = S2 / S2.mean()
+    return S2
+
+
+# =========================================================================
+# FLAIR-EWRR: Exponentially Weighted Ridge
+# =========================================================================
+
+def flair_ewrr(y_raw, horizon, period, freq_str, n_samples=500):
+    y = np.nan_to_num(np.asarray(y_raw, float), nan=0.0)
+    # Location shift: UNCHANGED from flair_ds
+    y_floor = y.min()
+    y_shift = max(1 - y_floor, 1.0)
+    y = y + y_shift
+    n = len(y)
+
+    cal = get_periods(freq_str)
+    candidates = cal if cal else [period]
+    candidates = [p for p in candidates if p >= 1 and n // p >= 3]
+    if not candidates:
+        candidates = [1]
+
+    # MDL/BIC period selection: UNCHANGED
+    if len(candidates) == 1:
+        P = candidates[0]
+    else:
+        T_max = min(n, 500 * min(candidates))
+        y_sel = y[-T_max:]
+        best_P, best_bic = candidates[0], np.inf
+        for p_cand in candidates:
+            nc = T_max // p_cand
+            if nc < 5:
+                continue
+            mat_c = y_sel[-(nc * p_cand):].reshape(nc, p_cand).T
+            s = np.linalg.svd(mat_c, compute_uv=False)
+            rss1 = np.sum(s[1:] ** 2)
+            T = nc * p_cand
+            penalty = (p_cand + nc - 1) * np.log(T)
+            bic = T * np.log(max(rss1 / T, 1e-30)) + penalty
+            if bic < best_bic:
+                best_P, best_bic = p_cand, bic
+        P = best_P
+
+    secondary = [p for p in cal[1:] if p != P] if len(cal) > 1 else []
+
+    n_complete = n // P
+    if n_complete < 3:
+        P = 1
+        secondary = []
+        n_complete = n
+        if n_complete < 3:
+            fc = np.full(horizon, y[-1] - y_shift)
+            sigma = max(np.std(np.diff(y[-min(50, n):])), 1e-6) if n > 1 else 1.0
+            return np.clip(np.array([fc + np.random.normal(0, sigma, horizon)
+                                     for _ in range(n_samples)]),
+                           fc.mean() - sigma * 10, fc.mean() + sigma * 10)
+
+    if n_complete > 500:
+        y = y[-(500 * P):]
+        n = len(y)
+        n_complete = n // P
+
+    usable = n_complete * P
+    y_trim = y[-usable:]
+
+    mat = y_trim.reshape(n_complete, P).T
+
+    # Shape: UNCHANGED
+    K = min(5, n_complete)
+    recent = mat[:, -K:]
+    recent_totals = recent.sum(axis=0, keepdims=True)
+    proportions = np.where(recent_totals > 1e-10,
+                           recent / recent_totals,
+                           1.0 / P)
+    S_global = proportions.mean(axis=1)
+    S_global = S_global / max(S_global.sum(), 1e-10)
+
+    L = mat.sum(axis=0)
+
+    # Dirichlet Shape: UNCHANGED
+    C = secondary[0] // P if (secondary and secondary[0] % P == 0 and
+                               n_complete >= secondary[0] // P) else 1
+    m = int(np.ceil(horizon / P))
+
+    if C <= 1:
+        S_forecast = np.tile(S_global, (m, 1))
+        S_hist = np.tile(S_global, (n_complete, 1))
+    else:
+        K_ds = min(K * C, n_complete)
+        ds_mat = mat[:, -K_ds:]
+        ds_L = L[-K_ds:]
+        ds_ctx = np.arange(n_complete - K_ds, n_complete) % C
+        ds_totals = ds_mat.sum(axis=0, keepdims=True)
+        ds_props = np.where(ds_totals > 1e-10,
+                            ds_mat / ds_totals, 1.0 / P)
+        ctx_shapes = np.zeros((C, P))
+        for ci in range(C):
+            mask = ds_ctx == ci
+            if mask.sum() >= 1:
+                ctx_shapes[ci] = ds_props[:, mask].mean(axis=1)
+            else:
+                ctx_shapes[ci] = S_global
+            ctx_shapes[ci] /= max(ctx_shapes[ci].sum(), 1e-10)
+        S_hist = np.zeros((n_complete, P))
+        for k in range(n_complete):
+            S_hist[k] = ctx_shapes[k % C]
+        S_forecast = np.zeros((m, P))
+        for step in range(m):
+            S_forecast[step] = ctx_shapes[(n_complete + step) % C]
+
+    # Cross-period lags: UNCHANGED
+    cross_periods = []
+    for sp in secondary:
+        if sp % P == 0:
+            cp = sp // P
+            if 2 <= cp <= n_complete // 2:
+                cross_periods.append(cp)
+    if P == 1 and period >= 2 and period <= n_complete // 2:
+        cross_periods = sorted(set(cross_periods) | {period})
+    max_cp = max(cross_periods) if cross_periods else 0
+
+    # Shape₂: UNCHANGED
+    cp_main = cross_periods[0] if cross_periods else 0
+    S2 = None
+    use_deseason = False
+    if cp_main >= 2:
+        S2 = _compute_shape2(L, cp_main, n_complete)
+        if S2 is not None:
+            use_deseason = True
+
+    if use_deseason:
+        pos = np.arange(n_complete) % cp_main
+        L_work = L / np.maximum(S2[pos], 1e-10)
+    else:
+        L_work = L
+
+    # Box-Cox: UNCHANGED
+    lam = _bc_lambda(L_work)
+    L_bc = _bc(L_work, lam)
+    last_L = L_bc[-1]
+    L_innov = L_bc - last_L
+
+    # Features: UNCHANGED
+    start = max(1, max_cp) if max_cp >= 2 else 1
+    if n_complete - start < 3 and max_cp >= 2:
+        max_cp = 0
+        start = 1
+
+    n_train = n_complete - start
+    if n_train < 2:
+        L_hat_raw = np.full(m, _bc_inv(last_L, lam))
+        if use_deseason:
+            forecast_pos = (n_complete + np.arange(m)) % cp_main
+            L_hat = L_hat_raw * S2[forecast_pos]
+        else:
+            L_hat = L_hat_raw
+        fc = (L_hat[:, np.newaxis] * S_forecast).reshape(-1)[:horizon] - y_shift
+        sigma = max(np.std(np.diff(y[-min(50, n):])), 1e-6) if n > 1 else 1.0
+        return np.clip(np.array([fc + np.random.normal(0, sigma, horizon)
+                                 for _ in range(n_samples)]),
+                       fc - sigma * 10, fc + sigma * 10)
+
+    t = np.arange(n_complete, dtype=float)
+    trend = t / float(n_complete)
+    cols = [np.ones(n_complete), trend]
+    nb = len(cols)
+    base = np.column_stack(cols)
+
+    n_lag = 1 + (1 if max_cp >= 2 else 0)
+    nf = nb + n_lag
+
+    X = np.zeros((n_train, nf))
+    X[:, :nb] = base[start:]
+    X[:, nb] = L_innov[start-1:-1]
+    if max_cp >= 2:
+        X[:, nb+1] = L_innov[start-max_cp:n_complete-max_cp]
+    y_train = L_innov[start:]
+
+    # ══════════════════════════════════════════════════════════════════════
+    # EWRR: Exponential time-weighting before Ridge
+    # Half-life H = n_train/2 → beta = 2^(-2/n_train)
+    # Most recent row = weight 1.0, oldest = weight ~0.25
+    # ══════════════════════════════════════════════════════════════════════
+    if n_train >= 6:
+        half_life = max(n_train / 2.0, 3.0)
+        decay = 2.0 ** (-1.0 / half_life)
+        ew = decay ** np.arange(n_train - 1, -1, -1, dtype=float)
+        ew *= n_train / ew.sum()  # normalize to preserve scale
+        sqrt_ew = np.sqrt(ew)
+        X_w = X * sqrt_ew[:, np.newaxis]
+        y_w = y_train * sqrt_ew
+    else:
+        X_w = X
+        y_w = y_train
+
+    # ── ONE Ridge SA (on weighted data) ──
+    beta, loo_resid, _ = _ridge_gcv_loo_softavg(X_w, y_w)
+
+    # ── Stochastic Level paths: UNCHANGED ──
+    noise_pool = loo_resid[np.random.randint(0, len(loo_resid),
+                                             size=(n_samples, m))]
+    L_paths = np.column_stack([
+        np.tile(L_innov, (n_samples, 1)),
+        np.zeros((n_samples, m))
+    ])
+
+    for j in range(m):
+        ti = n_complete + j
+        pred = beta[0] + beta[1] * (ti / float(n_complete)) \
+             + beta[nb] * L_paths[:, ti - 1]
+        if max_cp >= 2:
+            pred += beta[nb + 1] * L_paths[:, ti - max_cp]
+        L_paths[:, ti] = pred + noise_pool[:, j]
+
+    L_hat_all = _bc_inv(L_paths[:, n_complete:n_complete + m] + last_L, lam)
+
+    if use_deseason:
+        forecast_pos = (n_complete + np.arange(m)) % cp_main
+        L_hat_all = L_hat_all * S2[forecast_pos][np.newaxis, :]
+
+    # Phase noise: UNCHANGED
+    fitted_mat = S_hist.T * L
+    E = mat - fitted_mat
+    K_r = min(50, n_complete)
+    R = E[:, -K_r:] / np.maximum(np.abs(fitted_mat[:, -K_r:]), 1e-8)
+
+    step_idx = np.arange(horizon) // P
+    phase_idx = np.arange(horizon) % P
+    R_flat = R.ravel()
+    raw_idx = np.random.randint(0, K_r, size=(n_samples, horizon))
+    phase_noise = R_flat[phase_idx[np.newaxis, :] * K_r + raw_idx]
+
+    S_h = S_forecast[step_idx, phase_idx]
+    samples = (L_hat_all[:, step_idx]
+               * S_h[np.newaxis, :]
+               * (1 + phase_noise)
+               - y_shift)
+
+    y_orig = y - y_shift
+    y_lo, y_hi = y_orig[-max(horizon*2,50):].min(), y_orig[-max(horizon*2,50):].max()
+    y_range = max(y_hi - y_lo, 1e-6)
+    samples = np.clip(samples, y_lo - y_range, y_hi + y_range)
+    return np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+# =========================================================================
+# Evaluation
+# =========================================================================
+
+def run_variant_200(label, forecast_fn):
+    results = []
+    for i, (ds, freq, term) in enumerate(CONFIGS, 1):
+        cid = f"{ds}/{freq}/{term}"
+        name_map = {
+            "kdd_cup_2018": "kdd_cup_2018_with_missing",
+            "car_parts": "car_parts_with_missing",
+            "temperature_rain": "temperature_rain_with_missing",
+            "loop_seattle": "LOOP_SEATTLE",
+            "m_dense": "M_DENSE", "sz_taxi": "SZ_TAXI", "saugeen": "saugeenday",
+        }
+        load = name_map.get(ds, ds)
+        dp = os.path.join(os.environ['GIFT_EVAL'], load)
+        if os.path.isdir(os.path.join(dp, freq)):
+            load = f"{load}/{freq}"
+        try:
+            dataset = Dataset(name=load, term=term, to_univariate=False)
+        except Exception:
+            print(f"  [{i:>2}] {cid} SKIP"); continue
+        period_val = get_period(dataset.freq)
+        pred = Predictor(dataset.prediction_length, period_val, dataset.freq,
+                         200, forecast_fn)
+        t0 = time.perf_counter()
+        try:
+            res = evaluate_model(pred, test_data=dataset.test_data, metrics=METRICS,
+                                 batch_size=5000, axis=None, mask_invalid_label=True,
+                                 allow_nan_forecast=False, seasonality=None)
+            mase = float(res['MASE[0.5]'].iloc[0])
+            crps = float(res['mean_weighted_sum_quantile_loss'].iloc[0])
+        except Exception as e:
+            print(f"  [{i:>2}] {cid} ERROR: {e}"); continue
+        elapsed = time.perf_counter() - t0
+        print(f"  [{i:>2}] {label:4s} {cid:40s} MASE={mase:.4f}  CRPS={crps:.4f}  ({elapsed:.0f}s)")
+        results.append({'config': cid, 'mase': mase, 'crps': crps,
+                        'time': elapsed, 'term': term})
+    return results
+
+
+if __name__ == '__main__':
+    from run_gift_eval_flair_ds import flair_ds
+
+    total_start = time.perf_counter()
+    gm = lambda v: np.exp(np.mean(np.log(np.clip(v, 1e-10, None))))
+
+    print(f"\n{'='*70}")
+    print(f"  Variant: FLAIR-DS (baseline, n_samples=200)")
+    print(f"{'='*70}")
+    ds_results = run_variant_200('DS', flair_ds)
+
+    print(f"\n{'='*70}")
+    print(f"  Variant: FLAIR-EWRR (Exponentially Weighted Ridge, n_samples=200)")
+    print(f"{'='*70}")
+    ew_results = run_variant_200('EWRR', flair_ewrr)
+
+    dsm = {r['config']: r for r in ds_results}
+    print(f"\n{'='*70}")
+    print("DELTA EWRR vs DS (n_samples=200)")
+    print(f"{'='*70}")
+    ratios_m, ratios_c = [], []
+    for r in ew_results:
+        ds = dsm.get(r['config'])
+        if ds:
+            rm = r['mase'] / ds['mase']
+            rc = r['crps'] / ds['crps']
+            ratios_m.append(rm)
+            ratios_c.append(rc)
+            dp = (rm - 1) * 100
+            mk = '++' if dp < -3 else '+' if dp < 0 else '--' if dp > 3 else '-' if dp > 0 else '='
+            print(f"  {mk:2s} {r['config']:40s}  EW={r['mase']:.4f}  DS={ds['mase']:.4f}  ({dp:+.1f}%)")
+
+    if ratios_m:
+        gm_m = gm(ratios_m)
+        gm_c = gm(ratios_c)
+        wins = sum(1 for r in ratios_m if r < 1.0)
+        losses = sum(1 for r in ratios_m if r > 1.0)
+        print(f"\nGeo mean MASE ratio (EWRR/DS): {gm_m:.4f}  ({(gm_m-1)*100:+.1f}%)")
+        print(f"Geo mean CRPS ratio (EWRR/DS): {gm_c:.4f}  ({(gm_c-1)*100:+.1f}%)")
+        print(f"Wins: {wins}/{len(ratios_m)}, Losses: {losses}/{len(ratios_m)}")
+
+    elapsed = time.perf_counter() - total_start
+    print(f"\nTotal time: {elapsed:.0f}s")

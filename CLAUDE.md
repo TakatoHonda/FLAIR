@@ -40,6 +40,23 @@
 - **Ordered QR Ridge**: singular matrix errors。改善なし
 - **Quadratic trend**: recursive forecast で発散
 
+### Location Shift の除去/置換は全て失敗 (2026-03-27, n_samples=200 公平比較)
+**Location shift は Shape の暗黙的正則化として機能している。除去するな。**
+
+1. **IHS 置換 (Box-Cox → arcsinh/sinh)**: 全体 +11.5%。Box-Cox の adaptive λ が分散安定化に不可欠。IHS は大きい値で常に log 圧縮し、λ≈1 (identity) や λ≈0.5 (sqrt) が最適な系列を壊す
+2. **Conditional shift (非負系列で shift=0)**: 全体 +1.1%。electricity -1% 改善するが m4_hourly +8.6%, solar +2-5% 退行。shift 除去で Shape にハードゼロが生じ、forecast = L×0 = 0 になる
+3. **MDL Transform Selection (BIC で identity vs Yeo-Johnson 選択)**: 全体 +1.8%。エレガントだが Shape ゼロ問題は Level 変換では解決不可能
+4. **Level-only shift (Box-Cox 前に Level だけ shift)**: P-floor でも 1-floor でも同じ。問題は Level でなく Shape
+5. **EWRR (指数重み付き Ridge, H=n/2)**: 全体 +0.8%。m4_yearly -1.7%, m4_monthly -1.8% は改善するが saugeen +6.8% 退行
+
+**根本的発見**: shift `y += max(1-min(y), 1)` は以下の3つの役割を同時に果たしている:
+- (a) Box-Cox に正値を保証 — Level shift で代替可能
+- (b) Shape の proportions をゼロから遠ざける — **代替手段なし**
+- (c) Phase noise の分母 (fitted = L×S) をゼロから遠ざける — L/P floor で部分的に代替可能
+特に (b) が重要: shift は乗法復元で自己相殺するため bias は小さいが、Shape ゼロを防ぐ正則化効果は不可欠
+
+**ベンチマーク注意**: DS_RESULTS (n_samples=20 の固定値) は run 間分散が大きい（m4_hourly: 1.18 vs fresh 1.94）。改善判定には必ず n_samples=200 で DS-fresh と同時実行すること
+
 ### その他の失敗
 - 差分次数ソフト平均 (d=1 vs d=2): ad hoc model averaging。論文に書けない
 - Multi-scale soft-average over P: 美しくない（just model averaging）
@@ -58,11 +75,11 @@
 
 ## 既知のバグ / 未解決問題
 
-### Location shift が非負系列を壊す問題 (CRITICAL)
-- **原因**: `y += shift` で L = sum(y+shift) = L_orig + P×shift。V9 は `L+1` だが MDL は `L+P`
-- **影響**: electricity/D が 1.84→3.17、bitbrains_fast_storage/H が V9 比で悪化
-- **未修正**: 負値系列は shift 必須（ETT2）、非負系列は shift 有害。if/else で分岐すると非負系列は V9 互換に戻るが、MDL の SVD 計算との相互作用でまだ差が出る
-- **根本解決案**: shift を raw y ではなく Level に適用する方式。ただし Shape との乗法復元で `(L-shift)*S ≠ L*S - shift` のため不整合
+### Location shift のトレードオフ (RESOLVED — 除去は不可)
+- **理論的バイアス**: `y += shift` で L = L_orig + P×shift。復元時に shift を1回引くため、位相ごとのバイアス = shift×(P×S[p]−1)
+- **しかし実験で判明**: shift 除去は全体で +1.1% 退行（n_samples=200, 19 configs 公平比較）。electricity は -1% 改善するが m4_hourly +8.6%, solar +2-5% 退行
+- **原因**: shift は Shape のゼロ防止正則化として不可欠。除去すると forecast = L×0 = 0 になる位相が生じる
+- **結論**: 理論的バイアスは存在するが、Shape 正則化の便益が上回る。shift はそのまま維持。詳細は「やっても無駄なこと」セクション参照
 
 ### bitbrains_fast_storage/H (relMASE=2.27-2.95)
 - MDL が P=168 を選択するが nc=3 → Shape/Level が不安定
