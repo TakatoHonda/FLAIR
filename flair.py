@@ -415,9 +415,8 @@ def flair_forecast(y_raw, horizon, freq, n_samples=200):
     step_idx = np.arange(horizon) // P
     phase_idx = np.arange(horizon) % P
 
-    R_flat = R.ravel()
-    raw_idx = np.random.randint(0, K_r, size=(n_samples, horizon))
-    phase_noise = R_flat[phase_idx[np.newaxis, :] * K_r + raw_idx]
+    col_idx = np.random.randint(0, K_r, size=(n_samples, m))
+    phase_noise = R[phase_idx[np.newaxis, :], col_idx[:, step_idx]]
 
     # ── Assemble: Level_path × Shape × (1 + phase_noise) ───────────
     S_h = S_forecast[step_idx, phase_idx]
