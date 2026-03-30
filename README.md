@@ -43,7 +43,7 @@ point_forecast = samples.mean(axis=0)
 5. **Shape₂** = secondary periodic pattern in Level, estimated as `w × raw + (1−w) × prior`, where `w = nc₂/(nc₂+cp)`. The prior is selected by BIC: first harmonic (2 params) when justified, flat (0 params) otherwise. Level is deseasonalized by dividing by Shape₂
 6. **Ridge** on deseasonalized Level: Box-Cox → NLinear → intercept + trend + lags → soft-average GCV
 7. **Stochastic Level paths**: LOO residuals are injected into the recursive forecast — errors propagate through the Ridge lag dynamics naturally. Mean-reverting series saturate; random-walk series grow as √step. No scaling formula needed
-8. **Phase noise** from SVD Residual Quantiles: E = M − fitted gives phase-specific relative noise. Combined with Level paths: `sample = Level_path × Shape₁ × (1 + phase_noise)`
+8. **Phase noise** from SVD Residual Quantiles: E = M − fitted gives phase-specific relative noise. Sampled scenario-coherently — all phases within the same forecast step share one historical period's residual pattern, preserving cross-phase correlation. Combined with Level paths: `sample = Level_path × Shape₁ × (1 + phase_noise)`
 
 ## Benchmark Results
 
