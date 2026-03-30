@@ -231,7 +231,7 @@ sample(h) = Level_hat[m] × (1 + level_noise × √(m+1))
             − shift
 ```
 
-where h = m × P + j, level_noise is drawn from Ridge LOO relative residuals, and phase_noise[j] is drawn from R[j, :].
+where h = m × P + j, level_noise is drawn from Ridge LOO relative residuals, and phase_noise[j] is drawn scenario-coherently from R[j, k] — all phases within the same forecast step share the same historical column k, preserving cross-phase correlation.
 
 Properties:
 - **Derived from SVD**: no ad-hoc bootstrapping, no distributional assumptions
