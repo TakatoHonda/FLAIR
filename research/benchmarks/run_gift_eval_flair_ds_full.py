@@ -33,7 +33,7 @@ OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pat
                           'results', '15_gift_eval')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-MODEL_NAME = "FLAIR_MDL"
+MODEL_NAME = "FLAIR_MDL_coherent"
 N_SAMPLES = 200
 
 METRICS = [
@@ -196,7 +196,7 @@ if __name__ == '__main__':
                 print(f"SKIPPED ({elapsed:.1f}s)")
 
     df = pd.DataFrame(results)
-    csv_path = os.path.join(OUTPUT_DIR, 'all_results_flair_mdl_svdmodal.csv')
+    csv_path = os.path.join(OUTPUT_DIR, f'all_results_{MODEL_NAME}.csv')
     df.to_csv(csv_path, index=False)
     print(f"\nSaved: {csv_path} ({len(df)} rows)")
 
