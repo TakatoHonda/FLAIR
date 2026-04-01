@@ -12,8 +12,9 @@ __pycache__/
 .ipynb_checkpoints/
 .venv/
 uv.lock
-pyproject.toml
 .python-version
+dist/
+*.egg-info/
 
 # ===== OS =====
 .DS_Store

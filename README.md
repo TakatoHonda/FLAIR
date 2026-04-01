@@ -40,7 +40,7 @@ Shape is structural (never learned), so it cannot overfit. Level is a smooth, co
 
 ```python
 import numpy as np
-from flair import forecast, FLAIR
+from pyflair import forecast, FLAIR
 
 y = np.random.rand(500) * 100  # your time series
 
@@ -61,17 +61,16 @@ samples = forecast(ts.values, horizon=12, freq='M')
 
 ## Installation
 
-FLAIR is a single file with two dependencies. No pip package yet — just copy or clone:
+```bash
+pip install pyflair
+```
+
+Or install from source:
 
 ```bash
-# Option 1: download the file
-curl -O https://raw.githubusercontent.com/TakatoHonda/FLAIR/main/flair.py
-
-# Option 2: clone the repo
 git clone https://github.com/TakatoHonda/FLAIR.git
-
-# Install dependencies
-pip install numpy scipy
+cd FLAIR
+pip install .
 ```
 
 ## Supported Frequencies
@@ -194,7 +193,7 @@ Generate probabilistic forecasts for a univariate time series.
 **Returns**: `ndarray` of shape `(n_samples, horizon)` — probabilistic forecast sample paths.
 
 ```python
-from flair import forecast
+from pyflair import forecast
 samples = forecast(y, horizon=24, freq='H')
 point   = samples.mean(axis=0)
 median  = np.median(samples, axis=0)
@@ -210,7 +209,7 @@ Class wrapper. Useful when forecasting multiple series with the same frequency.
 | `predict(y, horizon, n_samples=None)` | Same as `forecast()`, uses instance defaults |
 
 ```python
-from flair import FLAIR
+from pyflair import FLAIR
 model = FLAIR(freq='D', n_samples=500)
 for series in dataset:
     samples = model.predict(series, horizon=7)
