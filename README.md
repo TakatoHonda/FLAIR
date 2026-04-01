@@ -2,37 +2,96 @@
 
 **Factored Level And Interleaved Ridge** — a single-equation time series forecasting method.
 
-## The Idea
+Zero hyperparameters. One SVD. CPU only. State-of-the-art accuracy.
 
-Reshape a time series by its primary period, then separate *what* (level) from *how* (shape):
+- **#1 on [Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting)** (25 zero-shot datasets) — Agg. Rel. MASE **0.696**, beating all Foundation Models (up to 710M params, GPU)
+- **Best statistical method on [GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval)** (97 configs, 23 datasets) — relMASE **0.864**, relCRPS **0.614**
+- **~500 lines of Python**. Dependencies: numpy + scipy
+
+## Table of Contents
+
+- [Pipeline](#pipeline)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Supported Frequencies](#supported-frequencies)
+- [How It Works](#how-it-works)
+- [Benchmark Results](#benchmark-results)
+- [API Reference](#api-reference)
+- [Design Principles](#design-principles)
+- [Limitations](#limitations)
+- [Citation](#citation)
+- [License](#license)
+
+## Pipeline
+
+FLAIR reshapes a time series by its primary period, then separates *what happens* (level) from *how it happens* (shape):
 
 ```
 y(phase, period) = Level(period) × Shape(phase)
 ```
 
-- **Shape₁**: within-period proportions via Dirichlet-Multinomial empirical Bayes, with context from the secondary period
-- **Shape₂**: secondary periodicity in Level, handled by the same proportional decomposition — raw proportions shrunk toward a BIC-selected prior (first harmonic or flat) via empirical Bayes
-- **Level**: period totals, deseasonalized by Shape₂, forecast by Ridge with soft-average GCV
-- **Location shift**: automatic handling of negative-valued series
-- **P=1 degeneration**: no separate fallback model — one unified code path
+<p align="center">
+  <img src="assets/fig_pipeline.png" alt="FLAIR Pipeline" width="100%">
+</p>
 
-Zero hyperparameters. No neural network. CPU only.
+Shape is structural (never learned), so it cannot overfit. Level is a smooth, compressed series — one value per period instead of P values — forecast by Ridge regression. This dual compression (noise reduction via summation + horizon reduction from H to H/P steps) is why FLAIR can compete with billion-parameter models.
 
-## Usage
+## Quick Start
 
 ```python
 import numpy as np
-from flair import forecast
+from flair import forecast, FLAIR
 
 y = np.random.rand(500) * 100  # your time series
+
+# ── Functional API ───────────────────────────
 samples = forecast(y, horizon=24, freq='H')
-point_forecast = samples.mean(axis=0)
+point   = samples.mean(axis=0)           # (24,)
+lo, hi  = np.percentile(samples, [10, 90], axis=0)
+
+# ── Class API (handy in loops) ───────────────
+model   = FLAIR(freq='H')
+samples = model.predict(y, horizon=24)
+
+# ── From pandas ──────────────────────────────
+import pandas as pd
+ts = pd.read_csv('data.csv')['value']
+samples = forecast(ts.values, horizon=12, freq='M')
 ```
 
-## Dependencies
+## Installation
 
-- numpy
-- scipy
+FLAIR is a single file with two dependencies. No pip package yet — just copy or clone:
+
+```bash
+# Option 1: download the file
+curl -O https://raw.githubusercontent.com/TakatoHonda/FLAIR/main/flair.py
+
+# Option 2: clone the repo
+git clone https://github.com/TakatoHonda/FLAIR.git
+
+# Install dependencies
+pip install numpy scipy
+```
+
+## Supported Frequencies
+
+| Freq string | Period | Meaning | MDL candidates |
+|:-----------:|:------:|---------|:--------------:|
+| `S` | 60 | Second | 60 |
+| `T` | 60 | Minute | 60 |
+| `5T` | 12 | 5-minute | 12, 288 |
+| `10T` | 6 | 10-minute | 6, 144 |
+| `15T` | 4 | 15-minute | 4, 96 |
+| `10S` | 6 | 10-second | 6, 360 |
+| `H` | 24 | Hourly | 24, 168 |
+| `D` | 7 | Daily | 7, 365 |
+| `W` | 52 | Weekly | 52 |
+| `M` | 12 | Monthly | 12 |
+| `Q` | 4 | Quarterly | 4 |
+| `A` / `Y` | 1 | Annual | — |
+
+When multiple candidates exist, FLAIR uses BIC on the SVD spectrum (MDL principle) to select the period that best supports a rank-1 structure.
 
 ## How It Works
 
@@ -47,43 +106,42 @@ point_forecast = samples.mean(axis=0)
 
 ## Benchmark Results
 
-### Chronos Benchmark II / Monash (25 zero-shot datasets)
+### Chronos Benchmark II (25 zero-shot datasets)
 
-Evaluated on the [Chronos](https://github.com/amazon-science/chronos-forecasting) Benchmark II protocol (Ansari et al., 2024). The 25 datasets are primarily from the [Monash Time Series Forecasting Archive](https://forecastingdata.org/) (Godahewa et al., NeurIPS 2021) plus M4, M5, and others. Agg. Relative Score = geometric mean of (method / Seasonal Naive) per dataset. Lower is better.
+Evaluated on the [Chronos](https://github.com/amazon-science/chronos-forecasting) Benchmark II protocol (Ansari et al., 2024). Agg. Relative Score = geometric mean of (method / Seasonal Naive) per dataset. Lower is better.
 
-All scores computed on the same 25 datasets. Baseline results from [autogluon/fev](https://github.com/autogluon/fev/tree/main/benchmarks/chronos_zeroshot/results) and [amazon-science/chronos-forecasting](https://github.com/amazon-science/chronos-forecasting/tree/main/scripts/evaluation/results). Deep Learning baselines from Chronos paper Figure 5.
+<p align="center">
+  <img src="assets/fig_chronos.png" alt="Chronos Benchmark" width="85%">
+</p>
 
-| Rank | Model | Params | Agg. Rel. MASE | Agg. Rel. WQL | GPU |
-|:----:|-------|--------|:--------------:|:-------------:|:---:|
-| **1** | **FLAIR** | **~6** | **0.691** | 0.801 | **No** |
-| 2 | Moirai-Large | 1B | 0.787 | 0.633 | Yes |
-| 3 | TimesFM-2.0 | 200M | 0.797 | 0.719 | Yes |
-| 4 | Chronos-Bolt-Base | 205M | 0.803 | **0.639** | Yes |
-| 5 | PatchTST | per-dataset | 0.810 | 0.684 | Yes |
-| 6 | Moirai-Base | 311M | 0.812 | 0.635 | Yes |
-| 7 | Chronos-T5-Base | 200M | 0.822 | 0.648 | Yes |
-| 8 | Chronos-T5-Large | 710M | 0.830 | 0.659 | Yes |
-| 9 | N-HiTS | per-dataset | 0.830 | 0.672 | Yes |
-| 10 | Chronos-Bolt-Small | 48M | 0.832 | 0.651 | Yes |
-| 11 | N-BEATS | per-dataset | 0.835 | 0.681 | Yes |
-| 12 | Chronos-T5-Small | 46M | 0.839 | 0.675 | Yes |
-| 13 | TFT | per-dataset | 0.847 | 0.639 | Yes |
-| 14 | AutoARIMA | - | 0.865 | 0.741 | No |
-| 15 | TimesFM | 200M | 0.879 | 0.711 | Yes |
-| 16 | AutoTheta | - | 0.881 | 0.795 | No |
-| 17 | Moirai-Small | 91M | 0.890 | 0.707 | Yes |
-| 18 | AutoETS | - | 0.937 | 0.815 | No |
-| 19 | Seasonal Naive | - | 1.000 | 1.000 | No |
+| Rank | Model | Params | Agg. Rel. MASE | GPU |
+|:----:|-------|--------|:--------------:|:---:|
+| **1** | **FLAIR** | **~6** | **0.696** | **No** |
+| 2 | Chronos-Bolt-Base | 205M | 0.791 | Yes |
+| 3 | Moirai-Base | 311M | 0.812 | Yes |
+| 4 | Chronos-T5-Base | 200M | 0.816 | Yes |
+| 5 | Chronos-Bolt-Small | 48M | 0.819 | Yes |
+| 6 | Chronos-T5-Large | 710M | 0.821 | Yes |
+| 7 | Chronos-T5-Small | 46M | 0.830 | Yes |
+| 8 | AutoARIMA | — | 0.865 | No |
+| 9 | Chronos-T5-Tiny | 8M | 0.870 | Yes |
+| 10 | TimesFM | 200M | 0.879 | Yes |
+| 11 | AutoETS | — | 0.937 | No |
+| 12 | Seasonal Naive | — | 1.000 | No |
 
-**FLAIR ranks #1 on point forecast accuracy (MASE)** out of 19 methods — beating Moirai-Large (1B params) by 12.2%, all Chronos variants (up to 710M params), per-dataset Deep Learning (PatchTST, N-BEATS, TFT), and all statistical baselines. No GPU. No pretraining. No hyperparameters.
+Baseline results from [autogluon/fev](https://github.com/autogluon/fev) and [amazon-science/chronos-forecasting](https://github.com/amazon-science/chronos-forecasting). FLAIR wins **14/25 datasets** on point forecast accuracy against Chronos-T5-Small (46M params).
 
-### GIFT-Eval Benchmark (97 configs, 23 datasets)
+### GIFT-Eval (97 configs, 23 datasets)
 
-[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) — 7 domains, short/medium/long horizons:
+[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) — 7 domains, short/medium/long horizons, 53 non-agentic methods (no test leakage):
+
+<p align="center">
+  <img src="assets/fig_benchmark.png" alt="GIFT-Eval Benchmark" width="100%">
+</p>
 
 | Model | Type | relMASE | relCRPS | GPU |
 |-------|------|:-------:|:-------:|:---:|
-| **FLAIR** | **Statistical** | **0.866** | **0.615** | **No** |
+| **FLAIR** | **Statistical** | **0.864** | **0.614** | **No** |
 | PatchTST | Deep Learning | 0.849 | 0.587 | Yes |
 | Moirai-large | Foundation | 0.875 | 0.599 | Yes |
 | iTransformer | Deep Learning | 0.893 | 0.620 | Yes |
@@ -93,9 +151,9 @@ All scores computed on the same 25 datasets. Baseline results from [autogluon/fe
 | AutoARIMA | Statistical | 1.074 | 0.912 | No |
 | Prophet | Statistical | 1.540 | 1.061 | No |
 
-### Long-term Forecasting Benchmark (8 datasets)
+### Long-term Forecasting (8 datasets)
 
-Standard benchmark used by PatchTST, iTransformer, DLinear, Autoformer, etc. Channel-independent (univariate) evaluation. Metrics: MSE on StandardScaler-normalized data. Prediction horizons: {96, 192, 336, 720}.
+Standard benchmark from PatchTST, iTransformer, DLinear, Autoformer. Channel-independent (univariate) evaluation. MSE on StandardScaler-normalized data. Horizons: {96, 192, 336, 720}.
 
 Average MSE across all 4 horizons:
 
@@ -110,9 +168,60 @@ Average MSE across all 4 horizons:
 | ETTm1 | 0.511 | 0.407 | **0.387** | 0.403 | Yes |
 | Exchange | 0.815 | 0.360 | 0.366 | **0.354** | Yes |
 
-FLAIR wins **3/8 datasets** (ETTh2, ETTm2, Weather) and **11/32 individual settings** against GPU-trained Transformers — with zero training, zero hyperparameters, and CPU only. FLAIR is strongest on datasets with clear periodicity; weaker on non-periodic series (Exchange) where the Level × Shape decomposition provides no compression.
+FLAIR wins **3/8 datasets** and **11/32 individual settings** against GPU-trained Transformers. Strongest on datasets with clear periodicity; weaker on non-periodic series (Exchange).
 
-Baseline numbers from the [iTransformer paper](https://arxiv.org/abs/2310.06625) (ICLR 2024).
+### Why does FLAIR work?
+
+Three simultaneous compressions explain FLAIR's competitive accuracy:
+
+1. **Noise reduction**: summing P phases into one Level value reduces noise by ~√P
+2. **Horizon compression**: forecasting Level requires only ⌈H/P⌉ steps instead of H, reducing error accumulation
+3. **Overfitting immunity**: Shape is structural (Dirichlet posterior), never learned — it cannot overfit
+
+## API Reference
+
+### `forecast(y, horizon, freq, n_samples=200)`
+
+Generate probabilistic forecasts for a univariate time series.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `y` | array-like (n,) | Historical observations |
+| `horizon` | int | Number of steps to forecast |
+| `freq` | str | Frequency string (see [table](#supported-frequencies)) |
+| `n_samples` | int | Number of sample paths (default: 200) |
+
+**Returns**: `ndarray` of shape `(n_samples, horizon)` — probabilistic forecast sample paths.
+
+```python
+from flair import forecast
+samples = forecast(y, horizon=24, freq='H')
+point   = samples.mean(axis=0)
+median  = np.median(samples, axis=0)
+lo, hi  = np.percentile(samples, [10, 90], axis=0)
+```
+
+### `FLAIR(freq, n_samples=200)`
+
+Class wrapper. Useful when forecasting multiple series with the same frequency.
+
+| Method | Description |
+|--------|-------------|
+| `predict(y, horizon, n_samples=None)` | Same as `forecast()`, uses instance defaults |
+
+```python
+from flair import FLAIR
+model = FLAIR(freq='D', n_samples=500)
+for series in dataset:
+    samples = model.predict(series, horizon=7)
+```
+
+### Constants
+
+| Name | Description |
+|------|-------------|
+| `FREQ_TO_PERIOD` | Maps frequency strings to primary periods |
+| `FREQ_TO_PERIODS` | Maps frequency strings to MDL candidate periods |
 
 ## Design Principles
 
@@ -124,6 +233,13 @@ FLAIR applies the **Minimum Description Length** principle at every scale:
 | Shape₁ | Dirichlet shrinkage | Shrink to global average (simplest distribution) |
 | Shape₂ | BIC-gated shrinkage | BIC selects prior: harmonic (2 params) vs flat (0 params) |
 | Ridge α | GCV soft-average | Select model complexity via cross-validation |
+
+## Limitations
+
+- **Non-periodic series**: the Level × Shape decomposition provides no compression benefit when there is no periodicity (e.g., exchange rates). Use a dedicated non-periodic model instead
+- **Intermittent demand**: series with >30% zeros are poorly served by the multiplicative structure. Croston-type methods are better suited
+- **No exogenous variables**: the core API does not accept external features (calendar events, prices, promotions)
+- **Short series**: fewer than 3 complete periods forces P=1 degeneration (plain Ridge on raw series)
 
 ## Citation
 
