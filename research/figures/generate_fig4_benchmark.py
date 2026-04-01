@@ -23,7 +23,7 @@ GIFT_EVAL_RESULTS = "/tmp/gift-eval-space/results"
 OUTPUT_PATH = "docs/flair_tech_report/fig4_benchmark.png"
 
 # FLAIR scores (our method, not on the leaderboard)
-FLAIR_SCORES = {"relMASE": 0.866, "relCRPS": 0.615}
+FLAIR_SCORES = {"relMASE": 0.864, "relCRPS": 0.614}
 
 # Local results not on the leaderboard
 LOCAL_RESULTS = {
@@ -33,7 +33,7 @@ LOCAL_RESULTS = {
 
 # Models to exclude (extreme outliers that distort axes)
 # Extreme outliers + orchestration systems (not single-model methods)
-EXCLUDE_MODELS = {"auto_ets", "crossformer", "VISIT-1.0", "DeOSAlphaTimeGPTPredictor-2025"}
+EXCLUDE_MODELS = {"auto_ets", "crossformer", "VISIT-1.0", "DeOSAlphaTimeGPTPredictor-2025", "FLAIR"}
 
 
 def load_model_configs(results_dir: str) -> dict:
