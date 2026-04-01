@@ -27,9 +27,13 @@ Ridge LOO residuals scaled by √(recursive step) for horizon fan-out.
 One SVD. Zero hyperparameters. No neural network. One code path.
 
 Example:
-    >>> from flair import flair_forecast
-    >>> samples = flair_forecast(y, horizon=24, freq='H')
+    >>> from flair import forecast
+    >>> samples = forecast(y, horizon=24, freq='H')
     >>> point = samples.mean(axis=0)
+
+    >>> from flair import FLAIR
+    >>> model = FLAIR(freq='H')
+    >>> samples = model.predict(y, horizon=24)
 """
 
 import numpy as np
@@ -195,13 +199,13 @@ def _compute_shape2(L, cp, n_complete):
 
 # ── FLAIR core ───────────────────────────────────────────────────────────
 
-def flair_forecast(y_raw, horizon, freq, n_samples=200):
-    """FLAIR: Factored Level And Interleaved Ridge.
+def forecast(y_raw, horizon, freq, n_samples=200):
+    """Generate probabilistic forecasts for a univariate time series.
 
     Parameters
     ----------
     y_raw : array-like, shape (n,)
-        Historical observations (non-negative).
+        Historical observations.
     horizon : int
         Number of steps to forecast.
     freq : str
@@ -432,3 +436,51 @@ def flair_forecast(y_raw, horizon, freq, n_samples=200):
     samples = np.clip(samples, y_lo - y_range, y_hi + y_range)
 
     return np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+# ── Class API ───────────────────────────────────────────────────────────
+
+class FLAIR:
+    """Factored Level And Interleaved Ridge forecaster.
+
+    Parameters
+    ----------
+    freq : str
+        Frequency string ('H', 'D', 'W', 'M', '5T', etc.).
+    n_samples : int
+        Default number of sample paths for probabilistic forecast.
+
+    Example
+    -------
+    >>> model = FLAIR(freq='H')
+    >>> samples = model.predict(y, horizon=24)
+    >>> point = samples.mean(axis=0)
+    """
+
+    def __init__(self, freq, n_samples=200):
+        self.freq = freq
+        self.n_samples = n_samples
+
+    def predict(self, y, horizon, n_samples=None):
+        """Generate probabilistic forecasts.
+
+        Parameters
+        ----------
+        y : array-like, shape (n,)
+            Historical observations.
+        horizon : int
+            Number of steps to forecast.
+        n_samples : int, optional
+            Override the default number of sample paths.
+
+        Returns
+        -------
+        samples : ndarray, shape (n_samples, horizon)
+            Probabilistic forecast sample paths.
+        """
+        return forecast(y, horizon, self.freq,
+                        n_samples if n_samples is not None else self.n_samples)
+
+
+# Backward compatibility
+flair_forecast = forecast
