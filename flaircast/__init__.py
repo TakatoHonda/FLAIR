@@ -27,11 +27,11 @@ Ridge LOO residuals scaled by √(recursive step) for horizon fan-out.
 One SVD. Zero hyperparameters. No neural network. One code path.
 
 Example:
-    >>> from pyflair import forecast
+    >>> from flaircast import forecast
     >>> samples = forecast(y, horizon=24, freq='H')
     >>> point = samples.mean(axis=0)
 
-    >>> from pyflair import FLAIR
+    >>> from flaircast import FLAIR
     >>> model = FLAIR(freq='H')
     >>> samples = model.predict(y, horizon=24)
 """

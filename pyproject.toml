@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pyflair"
+name = "flaircast"
 version = "0.1.0"
 description = "FLAIR: Factored Level And Interleaved Ridge — zero-hyperparameter time series forecasting"
 readme = "README.md"
@@ -35,4 +35,4 @@ Homepage = "https://github.com/TakatoHonda/FLAIR"
 Repository = "https://github.com/TakatoHonda/FLAIR"
 
 [tool.hatch.build.targets.wheel]
-packages = ["pyflair"]
+packages = ["flaircast"]
