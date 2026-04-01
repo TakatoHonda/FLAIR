@@ -40,7 +40,7 @@ Shape is structural (never learned), so it cannot overfit. Level is a smooth, co
 
 ```python
 import numpy as np
-from pyflair import forecast, FLAIR
+from flaircast import forecast, FLAIR
 
 y = np.random.rand(500) * 100  # your time series
 
@@ -62,7 +62,7 @@ samples = forecast(ts.values, horizon=12, freq='M')
 ## Installation
 
 ```bash
-pip install pyflair
+pip install flaircast
 ```
 
 Or install from source:
@@ -193,7 +193,7 @@ Generate probabilistic forecasts for a univariate time series.
 **Returns**: `ndarray` of shape `(n_samples, horizon)` — probabilistic forecast sample paths.
 
 ```python
-from pyflair import forecast
+from flaircast import forecast
 samples = forecast(y, horizon=24, freq='H')
 point   = samples.mean(axis=0)
 median  = np.median(samples, axis=0)
@@ -209,7 +209,7 @@ Class wrapper. Useful when forecasting multiple series with the same frequency.
 | `predict(y, horizon, n_samples=None)` | Same as `forecast()`, uses instance defaults |
 
 ```python
-from pyflair import FLAIR
+from flaircast import FLAIR
 model = FLAIR(freq='D', n_samples=500)
 for series in dataset:
     samples = model.predict(series, horizon=7)
