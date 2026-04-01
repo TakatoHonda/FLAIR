@@ -329,9 +329,9 @@ The novelty is not in any single component, but in the specific combination that
 The entire method fits in one file (~250 lines):
 
 ```python
-from flair import flair_forecast
+from flair import forecast
 
-samples = flair_forecast(y, horizon=24, freq='H', n_samples=200)
+samples = forecast(y, horizon=24, freq='H', n_samples=200)
 point_forecast = samples.mean(axis=0)
 prediction_intervals = np.percentile(samples, [10, 90], axis=0)
 ```

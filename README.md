@@ -22,10 +22,10 @@ Zero hyperparameters. No neural network. CPU only.
 
 ```python
 import numpy as np
-from flair import flair_forecast
+from flair import forecast
 
 y = np.random.rand(500) * 100  # your time series
-samples = flair_forecast(y, horizon=24, freq='H')
+samples = forecast(y, horizon=24, freq='H')
 point_forecast = samples.mean(axis=0)
 ```
 

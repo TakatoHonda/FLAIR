@@ -290,9 +290,9 @@ FLAIR は**トップダウン時間的分解**（Athanasopoulos & Kourentzes, 20
 手法全体が1つのファイル（約250行）に収まる:
 
 ```python
-from flair import flair_forecast
+from flair import forecast
 
-samples = flair_forecast(y, horizon=24, freq='H', n_samples=200)
+samples = forecast(y, horizon=24, freq='H', n_samples=200)
 point_forecast = samples.mean(axis=0)
 prediction_intervals = np.percentile(samples, [10, 90], axis=0)
 ```
