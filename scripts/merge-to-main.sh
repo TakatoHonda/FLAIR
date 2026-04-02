@@ -18,7 +18,7 @@ set -euo pipefail
 #   flaircast/, tests/, .github/, scripts/,
 #   pyproject.toml, README.md, README_ja.md, LICENSE, assets/
 
-FORBIDDEN_RE='^(research/|results/|docs/|CLAUDE\.md)'
+FORBIDDEN_RE='^(research/|results/|docs/|scripts/|CLAUDE\.md)'
 
 red()   { echo -e "\033[1;31m$*\033[0m"; }
 green() { echo -e "\033[1;32m$*\033[0m"; }
