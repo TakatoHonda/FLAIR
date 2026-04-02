@@ -4,6 +4,8 @@
 
 Zero hyperparameters. One SVD. CPU only.
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TakatoHonda/FLAIR/blob/main/examples/quickstart.ipynb)
+
 - **#1 on [Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting)** (25 zero-shot datasets) — Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205M params, GPU)
 - **Best statistical method on [GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval)** (97 configs, 23 datasets) — relMASE **0.864**, relCRPS **0.614**
 - **~500 lines of Python**. Dependencies: numpy + scipy
