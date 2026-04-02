@@ -30,9 +30,46 @@ dependencies = [
     "scipy>=1.7",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "hypothesis>=6.0",
+    "mypy>=1.0",
+    "ruff>=0.4",
+]
+
 [project.urls]
 Homepage = "https://github.com/TakatoHonda/FLAIR"
 Repository = "https://github.com/TakatoHonda/FLAIR"
 
 [tool.hatch.build.targets.wheel]
 packages = ["flaircast"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: unit tests for individual functions",
+    "integration: end-to-end forecast tests",
+    "golden: regression tests against saved outputs",
+    "slow: tests that take >5 seconds",
+]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF002", "RUF003"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["scipy.*"]
+ignore_missing_imports = true
