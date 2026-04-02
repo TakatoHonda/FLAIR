@@ -444,9 +444,9 @@ def forecast(
             n_complete = n
         if n_complete < _MIN_COMPLETE:
             fc = np.full(horizon, y[-1] - y_shift)
-            sigma = float(
-                max(np.std(np.diff(y[-min(_PHASE_NOISE_K, n) :])), _EPS_SHAPE) if n > 1 else 1.0
-            )
+            sigma = float(np.std(np.diff(y[-min(_PHASE_NOISE_K, n) :]))) if n > 1 else 1.0
+            if sigma < _EPS_SHAPE:
+                sigma = _EPS_SHAPE
             fc_mean = float(fc.mean())
             return np.clip(
                 np.array([fc + rng.normal(0, sigma, horizon) for _ in range(n_samples)]),
