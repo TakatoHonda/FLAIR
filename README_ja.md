@@ -8,12 +8,12 @@
 
 [English](README.md)
 
-**Factored Level And Interleaved Ridge** — 単一方程式の時系列予測手法
+**Factored Level And Interleaved Ridge**: 単一方程式の時系列予測手法
 
 ハイパーパラメータ 0。SVD 1回。CPU のみ。
 
-- **[Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting) で第1位** (25データセット・ゼロショット) — Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205Mパラメータ, GPU)
-- **[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) で統計手法の中で最高精度** (97構成, 23データセット) — relMASE **0.864**, relCRPS **0.614**
+- **[Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting) で第1位** (25データセット・ゼロショット). Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205Mパラメータ, GPU)
+- **[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) で統計手法の中で最高精度** (97構成, 23データセット). relMASE **0.864**, relCRPS **0.614**
 - **Python 約500行**。依存: numpy + scipy のみ
 
 ## 目次
@@ -42,7 +42,7 @@ y(位相, 周期) = Level(周期) × Shape(位相)
   <img src="assets/fig_pipeline.png" alt="FLAIR Pipeline" width="100%">
 </p>
 
-Shape は構造的なもの（学習されない）なので、過学習しません。Level は圧縮された滑らかな系列 — P個の値の代わりに1周期あたり1つの値 — を Ridge 回帰で予測します。2つの圧縮が同時に働きます: P個の位相を加算してノイズが ~√P 倍低減し、予測ステップ数が H から ⌈H/P⌉ に減少します。
+Shape は構造的なもの（学習されない）なので、過学習しません。Level は圧縮された滑らかな系列（P個の値の代わりに1周期あたり1つの値）を Ridge 回帰で予測します。2つの圧縮が同時に働きます: P個の位相を加算してノイズが ~√P 倍低減し、予測ステップ数が H から ⌈H/P⌉ に減少します。
 
 ## クイックスタート
 
@@ -108,8 +108,8 @@ pip install .
 4. **Level** = 周期合計
 5. **Shape₂** = Level の二次周期パターン。`w × 生の比率 + (1−w) × 事前分布` で推定（`w = nc₂/(nc₂+cp)`）。事前分布は BIC で選択: 第1高調波（2パラメータ）vs フラット（0パラメータ）。Level を Shape₂ で割って季節除去
 6. **Ridge 回帰**: 季節除去済み Level に対して Box-Cox → NLinear → 切片 + トレンド + ラグ → GCV ソフト平均
-7. **確率的 Level パス**: LOO残差を再帰予測に注入 — 誤差が Ridge のラグダイナミクスを通じて自然に伝播。平均回帰する系列は飽和、ランダムウォーク系列は √step で成長。スケーリング公式不要
-8. **位相ノイズ**: SVD残差量子点 E = M − fitted から位相固有の相対ノイズを取得。シナリオ整合的にサンプリング — 同一予測ステップ内の全位相が1つの履歴周期の残差パターンを共有し、位相間相関を保存。Level パスと合成: `sample = Level_path × Shape₁ × (1 + phase_noise)`
+7. **確率的 Level パス**: LOO残差を再帰予測に注入。誤差が Ridge のラグダイナミクスを通じて自然に伝播。平均回帰する系列は飽和、ランダムウォーク系列は √step で成長。スケーリング公式不要
+8. **位相ノイズ**: SVD残差量子点 E = M − fitted から位相固有の相対ノイズを取得。シナリオ整合的にサンプリングし、同一予測ステップ内の全位相が1つの履歴周期の残差パターンを共有し、位相間相関を保存。Level パスと合成: `sample = Level_path × Shape₁ × (1 + phase_noise)`
 
 ## ベンチマーク結果
 
@@ -140,7 +140,7 @@ pip install .
 
 ### GIFT-Eval (97構成, 23データセット)
 
-[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) — 7ドメイン、short/medium/long ホライゾン、53手法（非agentic、テストデータ漏洩なし）：
+[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval). 7ドメイン、short/medium/long ホライゾン、53手法（非agentic、テストデータ漏洩なし）：
 
 <p align="center">
   <img src="assets/fig_benchmark.png" alt="GIFT-Eval Benchmark" width="100%">
@@ -199,7 +199,7 @@ FLAIR は **8データセット中3個**、**32個別設定中11個**で GPU Tra
 | `n_samples` | int | サンプルパス数（デフォルト: 200） |
 | `seed` | int or None | 再現性のための乱数シード（デフォルト: None） |
 
-**戻り値**: `ndarray` shape `(n_samples, horizon)` — 確率予測のサンプルパス
+**戻り値**: `ndarray` shape `(n_samples, horizon)`。確率予測のサンプルパス
 
 ```python
 from flaircast import forecast
