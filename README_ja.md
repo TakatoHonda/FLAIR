@@ -4,6 +4,8 @@
 
 ハイパーパラメータ 0。SVD 1回。CPU のみ。
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TakatoHonda/FLAIR/blob/main/examples/quickstart.ipynb)
+
 - **[Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting) で第1位** (25データセット・ゼロショット) — Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205Mパラメータ, GPU)
 - **[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) で統計手法の中で最高精度** (97構成, 23データセット) — relMASE **0.864**, relCRPS **0.614**
 - **Python 約500行**。依存: numpy + scipy のみ
