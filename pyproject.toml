@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "flaircast"
-version = "0.1.0"
+version = "0.2.0"
 description = "FLAIR: Factored Level And Interleaved Ridge — zero-hyperparameter time series forecasting"
 readme = "README.md"
 license = "MIT"
@@ -43,6 +43,9 @@ dev = [
 Homepage = "https://github.com/TakatoHonda/FLAIR"
 Repository = "https://github.com/TakatoHonda/FLAIR"
 
+[tool.hatch.build.targets.sdist]
+include = ["flaircast/", "tests/", "README.md", "LICENSE", "pyproject.toml"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["flaircast"]
 
@@ -73,3 +76,8 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = ["scipy.*"]
 ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "hatch>=1.15.1",
+]
