@@ -7,6 +7,23 @@ on:
     branches: [dev, main]
 
 jobs:
+  guard-main:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for forbidden files on main
+        run: |
+          forbidden=$(git ls-tree -r --name-only HEAD | grep -E '^(research/|results/|docs/|CLAUDE\.md)' || true)
+          if [ -n "$forbidden" ]; then
+            echo "::error::Forbidden files found on main branch:"
+            echo "$forbidden"
+            echo ""
+            echo "main should only contain: flaircast/, tests/, .github/, pyproject.toml, README*.md, LICENSE, assets/"
+            exit 1
+          fi
+          echo "Main branch is clean."
+
   test:
     runs-on: ubuntu-latest
     strategy:
