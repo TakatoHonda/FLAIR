@@ -235,8 +235,8 @@ def _compute_shape2(
     S2_harmonic = 1.0 + a * cos_b + b * sin_b
 
     # MDL gate: BIC selects harmonic (2 params) vs flat (0 params)
-    RSS_flat = np.sum(S2_c**2)
-    RSS_harmonic = np.sum((S2_raw - S2_harmonic) ** 2)
+    RSS_flat: float = float(np.sum(S2_c**2))
+    RSS_harmonic: float = float(np.sum((S2_raw - S2_harmonic) ** 2))
     bic_flat = cp * np.log(max(RSS_flat / cp, _EPS_LOG))
     bic_harmonic = cp * np.log(max(RSS_harmonic / cp, _EPS_LOG)) + 2 * np.log(cp)
     S2_prior = S2_harmonic if bic_harmonic < bic_flat else np.ones(cp)
@@ -447,10 +447,11 @@ def forecast(
             sigma = (
                 max(np.std(np.diff(y[-min(_PHASE_NOISE_K, n) :])), _EPS_SHAPE) if n > 1 else 1.0
             )
+            fc_mean = float(fc.mean())
             return np.clip(
                 np.array([fc + rng.normal(0, sigma, horizon) for _ in range(n_samples)]),
-                fc.mean() - sigma * 10,
-                fc.mean() + sigma * 10,
+                fc_mean - sigma * 10,
+                fc_mean + sigma * 10,
             )
 
     if n_complete > _MAX_COMPLETE:

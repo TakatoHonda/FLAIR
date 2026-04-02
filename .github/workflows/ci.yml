@@ -35,7 +35,8 @@ jobs:
         with:
           version: "latest"
       - run: uv python install ${{ matrix.python-version }}
-      - run: uv sync --extra dev --python ${{ matrix.python-version }}
+      - run: uv venv --python ${{ matrix.python-version }}
+      - run: uv sync --extra dev
       - run: uv run pytest tests/ -v --cov=flaircast --cov-report=xml
       - uses: codecov/codecov-action@v4
         if: matrix.python-version == '3.12'
