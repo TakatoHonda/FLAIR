@@ -37,7 +37,7 @@ bold "Step 1: Checking out main and pulling latest..."
 git checkout main
 git pull origin main --ff-only || {
     red "ERROR: Cannot fast-forward main. Resolve manually."
-    git checkout "$current_branch"
+    git checkout -f "$current_branch"
     exit 1
 }
 
@@ -77,20 +77,21 @@ if [[ -n "$all_leaked" ]]; then
     red "ERROR: Forbidden files still present after cleanup:"
     echo "$all_leaked"
     git merge --abort 2>/dev/null || git reset --merge
-    git checkout "$current_branch"
+    git checkout -f "$current_branch"
     exit 1
 fi
 
 green "  Tree is clean."
 
 # ── Step 5: Run tests ─────────────────────────────────────────────────
-bold "Step 5: Running tests..."
+bold "Step 5: Installing deps and running tests..."
+uv sync --extra dev --quiet
 if uv run pytest tests/ --tb=short -q; then
     green "  All tests passed."
 else
     red "ERROR: Tests failed. Aborting merge."
     git merge --abort 2>/dev/null || git reset --merge
-    git checkout "$current_branch"
+    git checkout -f "$current_branch"
     exit 1
 fi
 
