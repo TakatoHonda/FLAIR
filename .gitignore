@@ -8,9 +8,6 @@ __pycache__/
 .ipynb_checkpoints/
 .venv/
 uv.lock
-.python-version
-dist/
-*.egg-info/
 
 # ===== OS =====
 .DS_Store
