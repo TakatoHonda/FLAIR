@@ -8,12 +8,12 @@
 
 [日本語版はこちら](README_ja.md)
 
-**Factored Level And Interleaved Ridge** — a single-equation time series forecasting method.
+**Factored Level And Interleaved Ridge**: a single-equation time series forecasting method.
 
 Zero hyperparameters. One SVD. CPU only.
 
-- **#1 on [Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting)** (25 zero-shot datasets) — Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205M params, GPU)
-- **Best statistical method on [GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval)** (97 configs, 23 datasets) — relMASE **0.864**, relCRPS **0.614**
+- **#1 on [Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting)** (25 zero-shot datasets). Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205M params, GPU)
+- **Best statistical method on [GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval)** (97 configs, 23 datasets). relMASE **0.864**, relCRPS **0.614**
 - **~500 lines of Python**. Dependencies: numpy + scipy
 
 ## Table of Contents
@@ -42,7 +42,7 @@ y(phase, period) = Level(period) × Shape(phase)
   <img src="assets/fig_pipeline.png" alt="FLAIR Pipeline" width="100%">
 </p>
 
-Shape is structural (not learned), so it does not overfit. Level is a smooth, compressed series — one value per period instead of P values — forecast by Ridge regression. Two compressions happen simultaneously: summing P phases into one Level value reduces noise by ~√P, and forecasting Level requires only ⌈H/P⌉ recursive steps instead of H.
+Shape is structural (not learned), so it does not overfit. Level is a smooth, compressed series (one value per period instead of P values) forecast by Ridge regression. Two compressions happen simultaneously: summing P phases into one Level value reduces noise by ~√P, and forecasting Level requires only ⌈H/P⌉ recursive steps instead of H.
 
 ## Quick Start
 
@@ -108,8 +108,8 @@ When multiple candidates exist, FLAIR uses BIC on the SVD spectrum (MDL principl
 4. **Level** = period totals
 5. **Shape₂** = secondary periodic pattern in Level, estimated as `w × raw + (1−w) × prior`, where `w = nc₂/(nc₂+cp)`. The prior is selected by BIC: first harmonic (2 params) when justified, flat (0 params) otherwise. Level is deseasonalized by dividing by Shape₂
 6. **Ridge** on deseasonalized Level: Box-Cox → NLinear → intercept + trend + lags → soft-average GCV
-7. **Stochastic Level paths**: LOO residuals are injected into the recursive forecast — errors propagate through the Ridge lag dynamics naturally. Mean-reverting series saturate; random-walk series grow as √step. No scaling formula needed
-8. **Phase noise** from SVD Residual Quantiles: E = M − fitted gives phase-specific relative noise. Sampled scenario-coherently — all phases within the same forecast step share one historical period's residual pattern, preserving cross-phase correlation. Combined with Level paths: `sample = Level_path × Shape₁ × (1 + phase_noise)`
+7. **Stochastic Level paths**: LOO residuals are injected into the recursive forecast. Errors propagate through the Ridge lag dynamics naturally. Mean-reverting series saturate; random-walk series grow as √step. No scaling formula needed
+8. **Phase noise** from SVD Residual Quantiles: E = M − fitted gives phase-specific relative noise. Sampled scenario-coherently: all phases within the same forecast step share one historical period's residual pattern, preserving cross-phase correlation. Combined with Level paths: `sample = Level_path × Shape₁ × (1 + phase_noise)`
 
 ## Benchmark Results
 
@@ -140,7 +140,7 @@ Baseline results from [autogluon/fev](https://github.com/autogluon/fev) and [ama
 
 ### GIFT-Eval (97 configs, 23 datasets)
 
-[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) — 7 domains, short/medium/long horizons, 53 non-agentic methods (no test leakage):
+[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval). 7 domains, short/medium/long horizons, 53 non-agentic methods (no test leakage):
 
 <p align="center">
   <img src="assets/fig_benchmark.png" alt="GIFT-Eval Benchmark" width="100%">
@@ -183,7 +183,7 @@ Three compressions act simultaneously:
 
 1. **Noise reduction**: summing P phases into one Level value reduces noise by ~√P
 2. **Horizon compression**: forecasting Level requires only ⌈H/P⌉ steps instead of H, reducing error accumulation
-3. **Shape is fixed**: Shape is a Dirichlet posterior, not a learned parameter — it does not overfit
+3. **Shape is fixed**: Shape is a Dirichlet posterior, not a learned parameter, so it does not overfit
 
 ## API Reference
 
@@ -199,7 +199,7 @@ Generate probabilistic forecasts for a univariate time series.
 | `n_samples` | int | Number of sample paths (default: 200) |
 | `seed` | int or None | Random seed for reproducibility (default: None) |
 
-**Returns**: `ndarray` of shape `(n_samples, horizon)` — probabilistic forecast sample paths.
+**Returns**: `ndarray` of shape `(n_samples, horizon)`. Probabilistic forecast sample paths.
 
 ```python
 from flaircast import forecast
