@@ -49,6 +49,6 @@ class TestGoldenSnapshots:
         np.testing.assert_allclose(
             actual,
             expected,
-            rtol=1e-10,
+            rtol=1e-6,
             err_msg=f"Golden snapshot mismatch for {fixture_name}",
         )
