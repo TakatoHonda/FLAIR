@@ -1,10 +1,14 @@
 # FLAIR
 
+[![PyPI](https://img.shields.io/pypi/v/flaircast)](https://pypi.org/project/flaircast/)
+[![Python](https://img.shields.io/pypi/pyversions/flaircast)](https://pypi.org/project/flaircast/)
+[![CI](https://github.com/TakatoHonda/FLAIR/actions/workflows/ci.yml/badge.svg)](https://github.com/TakatoHonda/FLAIR/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/TakatoHonda/FLAIR)](LICENSE)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TakatoHonda/FLAIR/blob/main/examples/quickstart.ipynb)
+
 **Factored Level And Interleaved Ridge** — 単一方程式の時系列予測手法
 
 ハイパーパラメータ 0。SVD 1回。CPU のみ。
-
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TakatoHonda/FLAIR/blob/main/examples/quickstart.ipynb)
 
 - **[Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting) で第1位** (25データセット・ゼロショット) — Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205Mパラメータ, GPU)
 - **[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) で統計手法の中で最高精度** (97構成, 23データセット) — relMASE **0.864**, relCRPS **0.614**
