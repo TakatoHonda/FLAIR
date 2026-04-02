@@ -108,5 +108,5 @@ else
 fi
 
 # ── Return to original branch ─────────────────────────────────────────
-git checkout "$current_branch"
+git checkout -f "$current_branch"
 green "Done. Back on $current_branch."
