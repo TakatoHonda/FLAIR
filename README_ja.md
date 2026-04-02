@@ -6,6 +6,8 @@
 [![License](https://img.shields.io/github/license/TakatoHonda/FLAIR)](LICENSE)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TakatoHonda/FLAIR/blob/main/examples/quickstart.ipynb)
 
+[English](README.md)
+
 **Factored Level And Interleaved Ridge** — 単一方程式の時系列予測手法
 
 ハイパーパラメータ 0。SVD 1回。CPU のみ。

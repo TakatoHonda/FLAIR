@@ -6,6 +6,8 @@
 [![License](https://img.shields.io/github/license/TakatoHonda/FLAIR)](LICENSE)
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TakatoHonda/FLAIR/blob/main/examples/quickstart.ipynb)
 
+[日本語版はこちら](README_ja.md)
+
 **Factored Level And Interleaved Ridge** — a single-equation time series forecasting method.
 
 Zero hyperparameters. One SVD. CPU only.
