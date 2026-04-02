@@ -258,4 +258,4 @@ FLAIR applies the **Minimum Description Length** principle at every scale:
 
 ## License
 
-MIT
+Apache License 2.0
