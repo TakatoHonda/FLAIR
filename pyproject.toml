@@ -7,7 +7,7 @@ name = "flaircast"
 version = "0.2.0"
 description = "FLAIR: Factored Level And Interleaved Ridge — zero-hyperparameter time series forecasting"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.9"
 authors = [
     { name = "Takato Honda" },
@@ -16,7 +16,7 @@ keywords = ["time-series", "forecasting", "ridge-regression", "probabilistic-for
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
