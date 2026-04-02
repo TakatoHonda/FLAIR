@@ -2,9 +2,9 @@
 
 **Factored Level And Interleaved Ridge** — a single-equation time series forecasting method.
 
-Zero hyperparameters. One SVD. CPU only. State-of-the-art accuracy.
+Zero hyperparameters. One SVD. CPU only.
 
-- **#1 on [Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting)** (25 zero-shot datasets) — Agg. Rel. MASE **0.696**, beating all Foundation Models (up to 710M params, GPU)
+- **#1 on [Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting)** (25 zero-shot datasets) — Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205M params, GPU)
 - **Best statistical method on [GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval)** (97 configs, 23 datasets) — relMASE **0.864**, relCRPS **0.614**
 - **~500 lines of Python**. Dependencies: numpy + scipy
 
@@ -34,7 +34,7 @@ y(phase, period) = Level(period) × Shape(phase)
   <img src="assets/fig_pipeline.png" alt="FLAIR Pipeline" width="100%">
 </p>
 
-Shape is structural (never learned), so it cannot overfit. Level is a smooth, compressed series — one value per period instead of P values — forecast by Ridge regression. This dual compression (noise reduction via summation + horizon reduction from H to H/P steps) is why FLAIR can compete with billion-parameter models.
+Shape is structural (not learned), so it does not overfit. Level is a smooth, compressed series — one value per period instead of P values — forecast by Ridge regression. Two compressions happen simultaneously: summing P phases into one Level value reduces noise by ~√P, and forecasting Level requires only ⌈H/P⌉ recursive steps instead of H.
 
 ## Quick Start
 
@@ -128,7 +128,7 @@ Evaluated on the [Chronos](https://github.com/amazon-science/chronos-forecasting
 | 11 | AutoETS | — | 0.937 | No |
 | 12 | Seasonal Naive | — | 1.000 | No |
 
-Baseline results from [autogluon/fev](https://github.com/autogluon/fev) and [amazon-science/chronos-forecasting](https://github.com/amazon-science/chronos-forecasting). FLAIR wins **14/25 datasets** on point forecast accuracy against Chronos-T5-Small (46M params).
+Baseline results from [autogluon/fev](https://github.com/autogluon/fev) and [amazon-science/chronos-forecasting](https://github.com/amazon-science/chronos-forecasting). FLAIR outperforms Chronos-T5-Small (46M params) on **14 of 25 datasets** in point forecast accuracy.
 
 ### GIFT-Eval (97 configs, 23 datasets)
 
@@ -167,19 +167,19 @@ Average MSE across all 4 horizons:
 | ETTm1 | 0.511 | 0.407 | **0.387** | 0.403 | Yes |
 | Exchange | 0.815 | 0.360 | 0.366 | **0.354** | Yes |
 
-FLAIR wins **3/8 datasets** and **11/32 individual settings** against GPU-trained Transformers. Strongest on datasets with clear periodicity; weaker on non-periodic series (Exchange).
+FLAIR outperforms GPU-trained Transformers on **3 of 8 datasets** and **11 of 32 individual settings**. Accuracy is higher on datasets with clear periodicity and lower on non-periodic series (Exchange).
 
 ### Why does FLAIR work?
 
-Three simultaneous compressions explain FLAIR's competitive accuracy:
+Three compressions act simultaneously:
 
 1. **Noise reduction**: summing P phases into one Level value reduces noise by ~√P
 2. **Horizon compression**: forecasting Level requires only ⌈H/P⌉ steps instead of H, reducing error accumulation
-3. **Overfitting immunity**: Shape is structural (Dirichlet posterior), never learned — it cannot overfit
+3. **Shape is fixed**: Shape is a Dirichlet posterior, not a learned parameter — it does not overfit
 
 ## API Reference
 
-### `forecast(y, horizon, freq, n_samples=200)`
+### `forecast(y, horizon, freq, n_samples=200, seed=None)`
 
 Generate probabilistic forecasts for a univariate time series.
 
@@ -189,6 +189,7 @@ Generate probabilistic forecasts for a univariate time series.
 | `horizon` | int | Number of steps to forecast |
 | `freq` | str | Frequency string (see [table](#supported-frequencies)) |
 | `n_samples` | int | Number of sample paths (default: 200) |
+| `seed` | int or None | Random seed for reproducibility (default: None) |
 
 **Returns**: `ndarray` of shape `(n_samples, horizon)` — probabilistic forecast sample paths.
 
@@ -200,13 +201,13 @@ median  = np.median(samples, axis=0)
 lo, hi  = np.percentile(samples, [10, 90], axis=0)
 ```
 
-### `FLAIR(freq, n_samples=200)`
+### `FLAIR(freq, n_samples=200, seed=None)`
 
 Class wrapper. Useful when forecasting multiple series with the same frequency.
 
 | Method | Description |
 |--------|-------------|
-| `predict(y, horizon, n_samples=None)` | Same as `forecast()`, uses instance defaults |
+| `predict(y, horizon, n_samples=None, seed=None)` | Same as `forecast()`, uses instance defaults |
 
 ```python
 from flaircast import FLAIR
