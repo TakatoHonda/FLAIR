@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - run: uv python install ${{ matrix.python-version }}
+      - run: uv sync --extra dev --python ${{ matrix.python-version }}
+      - run: uv run pytest tests/ -v --cov=flaircast --cov-report=xml
+      - uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.12'
+        with:
+          file: coverage.xml
+        continue-on-error: true
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - run: uv python install 3.12
+      - run: uv sync --extra dev
+      - run: uv run ruff check flaircast/ tests/
+      - run: uv run ruff format --check flaircast/ tests/
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - run: uv python install 3.12
+      - run: uv sync --extra dev
+      - run: uv run mypy flaircast/
