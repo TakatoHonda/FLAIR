@@ -386,9 +386,7 @@ def _estimate_gamma(mat: NDArray[np.floating], P: int, n_complete: int) -> float
     return float(np.clip(gamma, 0.0, 1.0))
 
 
-def _dampen_shape(
-    S: NDArray[np.floating], gamma: float
-) -> NDArray[np.floating]:
+def _dampen_shape(S: NDArray[np.floating], gamma: float) -> NDArray[np.floating]:
     """Apply Shape dampening S^γ and re-normalize.
 
     S can be 1D (P,) or 2D (m, P).
