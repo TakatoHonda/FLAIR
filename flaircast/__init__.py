@@ -56,7 +56,7 @@ _BC_EXP_CLIP = 30  # Clip range for exp() in Box-Cox inverse (lam=0)
 _MIN_POSITIVE_FOR_BC = 10  # Minimum positive values for Box-Cox lambda estimation
 _MIN_COMPLETE = 3  # Minimum complete periods for non-degenerate mode
 _MAX_COMPLETE = 500  # Cap on complete periods (memory/speed guard)
-_SHAPE_K = 5  # Number of recent periods for Shape estimation
+_SHAPE_K = 2  # Number of recent periods for Shape estimation (insensitive; see paper)
 _PHASE_NOISE_K = 50  # Number of recent periods for phase noise
 _N_ALPHAS = 25  # Number of log-spaced GCV alphas
 _ALPHA_LOG_MIN = -4  # log10 of minimum Ridge alpha
