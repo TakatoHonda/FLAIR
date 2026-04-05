@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "flaircast"
-version = "0.2.0"
+version = "0.2.1"
 description = "FLAIR: Factored Level And Interleaved Ridge — zero-hyperparameter time series forecasting"
 readme = "README.md"
 license = "Apache-2.0"
@@ -26,6 +26,8 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
+    "datasets>=4.5.0",
+    "matplotlib>=3.9.4",
     "numpy>=1.21",
     "scipy>=1.7",
 ]
