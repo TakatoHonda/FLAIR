@@ -191,10 +191,14 @@ def _ridge_sa(
         beta += wi * (Vt.T @ (d * Uty / s))
         d_avg += wi * d
 
-    # LOO residuals
+    # Predictive residuals: LOO scaled by √(1−h²) to convert from
+    # training-point LOO variance σ²/(1−h) to prediction-point
+    # variance σ²(1+h).  Ratio = (1+h)(1−h) = 1−h², so the
+    # standard-deviation correction is √(1−h²).
     residuals = y - X @ beta
     h_avg = (U**2) @ d_avg
     loo = residuals / np.maximum(1 - h_avg, _EPS)
+    loo *= np.sqrt(np.maximum(1 - h_avg * h_avg, _EPS))
 
     return beta, loo, gcv_min
 
