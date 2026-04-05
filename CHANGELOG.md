@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 (2026-04-05)
+
+- Predictive calibration of LOO residuals via leverage correction sqrt(1-h_ii)
+- Change Shape K from 5 to 2 (sensitivity analysis shows <0.2% impact for K=2..50)
+- Fix pandas offset-anchored frequency resolution (W-SUN to W, Q-DEC to Q)
+- Change license from MIT to Apache 2.0
+
 ## 0.2.0 (2026-04-02)
 
 - Add `seed` parameter to `forecast()` and `FLAIR` for reproducible results
