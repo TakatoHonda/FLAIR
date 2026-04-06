@@ -158,14 +158,17 @@ def _bc_inv(z: NDArray[np.floating], lam: float) -> NDArray[np.floating]:
 def _ridge_sa(
     X: NDArray[np.floating],
     y: NDArray[np.floating],
-) -> tuple[NDArray[np.floating], NDArray[np.floating], float]:
+) -> tuple[NDArray[np.floating], NDArray[np.floating], float,
+           NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
     """Ridge regression with LOOCV soft-average over 25 log-spaced alphas.
 
     Under the LSR1 model, this is local linear regression at the boundary
     u=1 with bandwidth h=∞ (global fit).  The regularization alpha is
     selected by LOOCV soft-averaging.
 
-    Returns (beta, loo_residuals, gcv_min).
+    Returns (beta, loo_residuals, gcv_min, Vt, s, d_avg).
+    LOO residuals are LWCP-normalized: e_i^LOO / sqrt(1 + h_ii).
+    SVD components are returned for test-point leverage computation.
     Everything from one SVD.
     """
     U, s, Vt = np.linalg.svd(X, full_matrices=False)
@@ -197,13 +200,17 @@ def _ridge_sa(
         beta += wi * (Vt.T @ (d * Uty / np.maximum(s, _EPS)))
         d_avg += wi * d
 
-    # Predictive residuals: LOO scaled by √(1−h²)
+    # LWCP-normalized LOO residuals: e_i^LOO / sqrt(1 + h_ii)
+    # Under LWCP (Fadnavis et al., 2026), this normalization removes
+    # leverage-dependent heteroscedasticity, producing approximately
+    # exchangeable scores.  The test-point interval is then scaled by
+    # sqrt(1 + h_test) to restore the correct variance at each horizon.
     residuals = y - X @ beta
     h_avg = (U**2) @ d_avg
-    loo = residuals / np.maximum(1 - h_avg, _EPS)
-    loo *= np.sqrt(np.maximum(1 - h_avg * h_avg, _EPS))
+    loo_raw = residuals / np.maximum(1 - h_avg, _EPS)
+    loo = loo_raw / np.sqrt(np.maximum(1 + h_avg, _EPS))
 
-    return beta, loo, gcv_min
+    return beta, loo, gcv_min, Vt, s, d_avg
 
 
 # ── Shape₂: MDL-Gated Prior Shrinkage ──────────────────────────────────
@@ -622,7 +629,7 @@ def forecast(
         if max_cp >= 2:
             X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
 
-        theta, loo_resid, _ = _ridge_sa(X, y_target)
+        theta, loo_resid, _, Vt_r, s_r, d_avg_r = _ridge_sa(X, y_target)
 
         # Recover original parameterization
         beta = theta.copy()
@@ -632,7 +639,7 @@ def forecast(
         X[:, nb] = L_innov[start - 1 : -1]
         if max_cp >= 2:
             X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
-        beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
+        beta, loo_resid, _, Vt_r, s_r, d_avg_r = _ridge_sa(X, L_innov[start:])
 
     # ── Damped trend (LSR1 boundary extrapolation) ───────────────────
     phi = _estimate_phi(L_bc)
@@ -645,8 +652,41 @@ def forecast(
     else:
         _damped_trend = np.full(m, (n_complete - 1.0) / n_complete)
 
-    # ── Stochastic Level paths (recursive noise injection) ────────────
-    noise_pool = loo_resid[rng.randint(0, len(loo_resid), size=(n_samples, m))]
+    # ── Test-point leverages for LWCP ──────────────────────────────────
+    # Compute h_test[j] for each forecast step using the point-forecast
+    # feature vector projected through the Ridge SVD.  h_test grows with
+    # horizon because trend extrapolates and lags become predicted values.
+    h_test = np.empty(m)
+    L_point = np.concatenate([L_innov, np.zeros(m)])
+    for j in range(m):
+        ti = n_complete + j
+        pred_pt = beta[0] + beta[1] * _damped_trend[j] + beta[nb] * L_point[ti - 1]
+        if max_cp >= 2:
+            pred_pt += beta[nb + 1] * L_point[ti - max_cp]
+        L_point[ti] = pred_pt
+
+        x_j = np.zeros(nf)
+        x_j[0] = 1.0
+        x_j[1] = _damped_trend[j]
+        if _DIFF_TARGET and n_train >= 3:
+            x_j[nb] = -L_point[ti - 1]
+        else:
+            x_j[nb] = L_point[ti - 1]
+        if max_cp >= 2:
+            x_j[nb + 1] = L_point[ti - max_cp]
+
+        v = Vt_r @ x_j
+        u_test = v / np.maximum(s_r, _EPS)
+        h_test[j] = float(np.sum(u_test**2 * d_avg_r))
+
+    h_test = np.clip(h_test, 0.0, 10.0)
+
+    # ── Stochastic Level paths (LWCP-calibrated noise injection) ─────
+    # LOO residuals are LWCP-normalized (÷ sqrt(1+h_train)).  Resample
+    # and inflate by sqrt(1+h_test[j]) to restore correct variance at
+    # each forecast step.  Short horizons ≈ uniform; long horizons fan out.
+    idx = rng.randint(0, len(loo_resid), size=(n_samples, m))
+    noise_pool = loo_resid[idx] * np.sqrt(1.0 + h_test)[np.newaxis, :]
     L_paths = np.column_stack(
         [np.tile(L_innov, (n_samples, 1)), np.zeros((n_samples, m))]
     )  # (n_samples, n_complete + m)
