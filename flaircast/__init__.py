@@ -618,7 +618,7 @@ def forecast(
         # Now Ridge shrinks δ₂ → 0, i.e., β₂ → 1 (random walk prior).
         # No magic numbers.  Standard isotropic Ridge.
         y_target = np.diff(L_innov[start - 1 :])  # ΔL_innov
-        X[:, nb] = -L_innov[start - 1 : -1]       # negated lag1 → δ₂ coeff
+        X[:, nb] = -L_innov[start - 1 : -1]  # negated lag1 → δ₂ coeff
         if max_cp >= 2:
             X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
 
