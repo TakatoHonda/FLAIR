@@ -38,7 +38,7 @@ Example:
 
 from __future__ import annotations
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 __all__ = ["FLAIR", "FREQ_TO_PERIOD", "FREQ_TO_PERIODS", "forecast"]
 
 import numpy as np
@@ -56,11 +56,13 @@ _BC_EXP_CLIP = 30  # Clip range for exp() in Box-Cox inverse (lam=0)
 _MIN_POSITIVE_FOR_BC = 10  # Minimum positive values for Box-Cox lambda estimation
 _MIN_COMPLETE = 3  # Minimum complete periods for non-degenerate mode
 _MAX_COMPLETE = 500  # Cap on complete periods (memory/speed guard)
+_DIFF_TARGET = True  # LSR1 reparameterization: target ΔL_innov, shrink δ₂=1-β₂ → 0
 _SHAPE_K = 2  # Number of recent periods for Shape estimation (insensitive; see paper)
 _PHASE_NOISE_K = 50  # Number of recent periods for phase noise
 _N_ALPHAS = 25  # Number of log-spaced GCV alphas
 _ALPHA_LOG_MIN = -4  # log10 of minimum Ridge alpha
 _ALPHA_LOG_MAX = 4  # log10 of maximum Ridge alpha
+_DIAG: dict = {}  # Diagnostic output (populated when non-empty)
 
 # ── Calendar tables ──────────────────────────────────────────────────────
 
@@ -157,7 +159,11 @@ def _ridge_sa(
     X: NDArray[np.floating],
     y: NDArray[np.floating],
 ) -> tuple[NDArray[np.floating], NDArray[np.floating], float]:
-    """Ridge regression with GCV soft-average over 25 log-spaced alphas.
+    """Ridge regression with LOOCV soft-average over 25 log-spaced alphas.
+
+    Under the LSR1 model, this is local linear regression at the boundary
+    u=1 with bandwidth h=∞ (global fit).  The regularization alpha is
+    selected by LOOCV soft-averaging.
 
     Returns (beta, loo_residuals, gcv_min).
     Everything from one SVD.
@@ -166,7 +172,7 @@ def _ridge_sa(
     s2, Uty = s**2, U.T @ y
     alphas = np.logspace(_ALPHA_LOG_MIN, _ALPHA_LOG_MAX, _N_ALPHAS)
 
-    # GCV for each alpha
+    # LOOCV for each alpha
     gcv = np.empty(len(alphas))
     for i, a in enumerate(alphas):
         d = s2 / (s2 + a)
@@ -188,13 +194,10 @@ def _ridge_sa(
         if wi < _EPS_WEIGHT:
             continue
         d = s2 / (s2 + a)
-        beta += wi * (Vt.T @ (d * Uty / s))
+        beta += wi * (Vt.T @ (d * Uty / np.maximum(s, _EPS)))
         d_avg += wi * d
 
-    # Predictive residuals: LOO scaled by √(1−h²) to convert from
-    # training-point LOO variance σ²/(1−h) to prediction-point
-    # variance σ²(1+h).  Ratio = (1+h)(1−h) = 1−h², so the
-    # standard-deviation correction is √(1−h²).
+    # Predictive residuals: LOO scaled by √(1−h²)
     residuals = y - X @ beta
     h_avg = (U**2) @ d_avg
     loo = residuals / np.maximum(1 - h_avg, _EPS)
@@ -430,6 +433,25 @@ def _compute_cross_periods(
     return cross_periods, max_cp
 
 
+def _estimate_phi(L_bc: NDArray[np.floating]) -> float:
+    """Estimate trend damping factor from lag-1 autocorrelation of diff(L_bc).
+
+    Under the LSR1 model, L belongs to Hölder(2), so the trend change rate
+    is bounded.  phi = max(rho_1(Delta L), 0) measures trend persistence:
+    phi > 0 means the trend is self-reinforcing; phi = 0 means mean-reverting
+    or noisy, warranting full damping of the linear extrapolation.
+    """
+    dL = np.diff(L_bc)
+    if len(dL) < 5:
+        return 0.0
+    dL_c = dL - dL.mean()
+    c0 = float(np.dot(dL_c, dL_c))
+    if c0 < _EPS:
+        return 0.0
+    c1 = float(np.dot(dL_c[:-1], dL_c[1:]))
+    return max(c1 / c0, 0.0)
+
+
 # ── FLAIR core ───────────────────────────────────────────────────────────
 
 
@@ -583,19 +605,47 @@ def forecast(
 
     X = np.zeros((n_train, nf))
     X[:, :nb] = base[start:]
-    X[:, nb] = L_innov[start - 1 : -1]
-    if max_cp >= 2:
-        X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
 
-    # ── One Ridge SA ─────────────────────────────────────────────────
-    beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
+    if _DIFF_TARGET and n_train >= 3:
+        # ── LSR1 reparameterization ─────────────────────────────────
+        # Under the LSR1 model, L ∈ Hölder(2) implies the Level is
+        # smooth, so consecutive values satisfy L(i) ≈ L(i-1), i.e.,
+        # the "natural" AR coefficient β₂ ≈ 1.  Standard Ridge shrinks
+        # β₂ → 0 (stationarity prior), which is inconsistent.
+        #
+        # Reparameterize: let δ₂ = 1 - β₂.  Rewrite the model as
+        #   ΔL_innov[i] = β₀ + β₁(i/n) − δ₂ L_innov[i-1] + β₃ lag_cp
+        # Now Ridge shrinks δ₂ → 0, i.e., β₂ → 1 (random walk prior).
+        # No magic numbers.  Standard isotropic Ridge.
+        y_target = np.diff(L_innov[start - 1 :])  # ΔL_innov
+        X[:, nb] = -L_innov[start - 1 : -1]       # negated lag1 → δ₂ coeff
+        if max_cp >= 2:
+            X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
+
+        theta, loo_resid, _ = _ridge_sa(X, y_target)
+
+        # Recover original parameterization
+        beta = theta.copy()
+        beta[nb] = 1.0 - theta[nb]  # β₂ = 1 − δ₂
+    else:
+        # ── Standard Ridge (fallback for very short series) ──────────
+        X[:, nb] = L_innov[start - 1 : -1]
+        if max_cp >= 2:
+            X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
+        beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
+
+    # ── Damped trend (LSR1 boundary extrapolation) ───────────────────
+    phi = _estimate_phi(L_bc)
+    if phi > _EPS:
+        _damped_trend = np.empty(m)
+        for j in range(m):
+            _damped_trend[j] = (
+                (n_complete - 1) + phi * (1.0 - phi ** (j + 1)) / (1.0 - phi)
+            ) / n_complete
+    else:
+        _damped_trend = np.full(m, (n_complete - 1.0) / n_complete)
 
     # ── Stochastic Level paths (recursive noise injection) ────────────
-    # The same recursion as the point forecast, but with LOO residual
-    # noise injected at each step.  Errors propagate through the lag
-    # features exactly as the Ridge dynamics dictate — no √step, no
-    # scaling formula.  Mean-reverting series naturally saturate;
-    # random-walk series naturally grow as √step.
     noise_pool = loo_resid[rng.randint(0, len(loo_resid), size=(n_samples, m))]
     L_paths = np.column_stack(
         [np.tile(L_innov, (n_samples, 1)), np.zeros((n_samples, m))]
@@ -603,7 +653,7 @@ def forecast(
 
     for j in range(m):
         ti = n_complete + j
-        pred = beta[0] + beta[1] * (ti / n_complete) + beta[nb] * L_paths[:, ti - 1]
+        pred = beta[0] + beta[1] * _damped_trend[j] + beta[nb] * L_paths[:, ti - 1]
         if max_cp >= 2:
             pred += beta[nb + 1] * L_paths[:, ti - max_cp]
         L_paths[:, ti] = pred + noise_pool[:, j]

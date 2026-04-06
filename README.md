@@ -13,7 +13,7 @@
 Zero hyperparameters. One SVD. CPU only.
 
 - **#1 on [Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting)** (25 zero-shot datasets). Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205M params, GPU)
-- **Best statistical method on [GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval)** (97 configs, 23 datasets). relMASE **0.864**, relCRPS **0.614**
+- **Best statistical method on [GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval)** (97 configs, 23 datasets). relMASE **0.857**, relCRPS **0.610**
 - **~500 lines of Python**. Dependencies: numpy + scipy
 
 ## Table of Contents
@@ -148,7 +148,7 @@ Baseline results from [autogluon/fev](https://github.com/autogluon/fev) and [ama
 
 | Model | Type | relMASE | relCRPS | GPU |
 |-------|------|:-------:|:-------:|:---:|
-| **FLAIR** | **Statistical** | **0.864** | **0.614** | **No** |
+| **FLAIR** | **Statistical** | **0.857** | **0.610** | **No** |
 | PatchTST | Deep Learning | 0.849 | 0.587 | Yes |
 | Moirai-large | Foundation | 0.875 | 0.599 | Yes |
 | iTransformer | Deep Learning | 0.893 | 0.620 | Yes |

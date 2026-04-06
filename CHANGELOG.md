@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 (2026-04-07)
+
+- LSR1 diff-target reparameterization: Level を random walk として再定式化し、Ridge が差分 ΔL を直接予測
+- Damped trend: Level 外挿時に exponential damping を適用し、長期予測の発散を抑制
+- GIFT-Eval relMASE 0.885 → 0.857 (-3.2%), relCRPS 0.610 (97 configs, 23 datasets)
+
 ## 0.2.1 (2026-04-05)
 
 - Predictive calibration of LOO residuals via leverage correction sqrt(1-h_ii)
