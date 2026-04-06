@@ -61,8 +61,7 @@ _PHASE_NOISE_K = 50  # Number of recent periods for phase noise
 _N_ALPHAS = 25  # Number of log-spaced GCV alphas
 _ALPHA_LOG_MIN = -4  # log10 of minimum Ridge alpha
 _ALPHA_LOG_MAX = 4  # log10 of maximum Ridge alpha
-_HALF_LIFE_FRACS = (0.25, 0.5, 1.0)  # Finite half-life fractions of n_train (+ inf)
-_HALF_LIFE_MIN = 3  # Absolute minimum half-life
+_DIAG: dict = {}  # Diagnostic output (populated when non-empty)
 
 # ── Calendar tables ──────────────────────────────────────────────────────
 
@@ -159,86 +158,51 @@ def _ridge_sa(
     X: NDArray[np.floating],
     y: NDArray[np.floating],
 ) -> tuple[NDArray[np.floating], NDArray[np.floating], float]:
-    """Kernel-weighted Ridge with LOOCV soft-average over (alpha, half-life).
+    """Ridge regression with LOOCV soft-average over 25 log-spaced alphas.
 
-    Under the LSR1 model, Level L(u) is a smooth function of rescaled time.
-    Ridge with exponential observation weights is equivalent to local linear
-    regression at the boundary u=1 with an exponential kernel (Fan & Gijbels
-    1996).  The bandwidth h and regularization alpha are jointly selected by
-    LOOCV soft-averaging, achieving the minimax-optimal boundary rate for
-    Hölder(2) functions.
+    Under the LSR1 model, this is local linear regression at the boundary
+    u=1 with bandwidth h=∞ (global fit).  The regularization alpha is
+    selected by LOOCV soft-averaging.
 
-    Returns (beta, loo_residuals, loocv_min).
+    Returns (beta, loo_residuals, gcv_min).
+    Everything from one SVD.
     """
-    n_train, p = X.shape
+    U, s, Vt = np.linalg.svd(X, full_matrices=False)
+    s2, Uty = s**2, U.T @ y
     alphas = np.logspace(_ALPHA_LOG_MIN, _ALPHA_LOG_MAX, _N_ALPHAS)
 
-    # Half-life grid: theory says h* ~ n^{-1/5}, covering hl/n in [0.25, 1, inf]
-    half_lives: list[float | None] = []
-    seen: set[int] = set()
-    for frac in _HALF_LIFE_FRACS:
-        hl = max(_HALF_LIFE_MIN, int(n_train * frac))
-        if hl not in seen:
-            half_lives.append(float(hl))
-            seen.add(hl)
-    half_lives.append(None)  # None = infinity (uniform weights, current behavior)
+    # LOOCV for each alpha
+    gcv = np.empty(len(alphas))
+    for i, a in enumerate(alphas):
+        d = s2 / (s2 + a)
+        h = (U**2) @ d
+        r = y - U @ (d * Uty)
+        gcv[i] = np.mean((r / np.maximum(1 - h, _EPS)) ** 2)
 
-    n_models = len(half_lives) * _N_ALPHAS
-    all_loocv = np.empty(n_models)
-    all_beta = np.empty((n_models, p))
-    all_peff = np.empty(n_models)
-
-    idx = 0
-    for hl in half_lives:
-        # Exponential kernel weights
-        if hl is not None:
-            decay = np.arange(n_train - 1, -1, -1, dtype=float)
-            w = np.power(2.0, -decay / hl)
-            sqrt_w = np.sqrt(w)
-            Xw = X * sqrt_w[:, np.newaxis]
-            yw = y * sqrt_w
-            n_eff = float(np.sum(w)) ** 2 / float(np.sum(w * w))
-        else:
-            Xw, yw = X, y
-            n_eff = float(n_train)
-
-        U, s, Vt = np.linalg.svd(Xw, full_matrices=False)
-        s2, Uty = s**2, U.T @ yw
-
-        for a in alphas:
-            d = s2 / (s2 + a)
-            h_diag = (U**2) @ d
-            r = yw - U @ (d * Uty)
-            # LOOCV with n_eff normalization for cross-bandwidth comparability
-            all_loocv[idx] = float(
-                np.sum((r / np.maximum(1 - h_diag, _EPS)) ** 2) / n_eff
-            )
-            all_beta[idx] = Vt.T @ (d * Uty / np.maximum(s, _EPS))
-            all_peff[idx] = float(np.sum(d))
-            idx += 1
-
-    # Softmax over all (alpha, half-life) pairs
-    loocv_min = float(all_loocv.min())
-    log_w = -(all_loocv - loocv_min) / max(loocv_min, _EPS)
+    # Softmax weights (temperature = gcv_min)
+    gcv_min = gcv.min()
+    log_w = -(gcv - gcv_min) / max(gcv_min, _EPS)
     log_w -= log_w.max()
     w = np.exp(log_w)
     w /= w.sum()
 
-    # Weighted-average beta and effective degrees of freedom
-    beta = np.zeros(p)
-    p_eff = 0.0
-    for i in range(n_models):
-        if w[i] < _EPS_WEIGHT:
+    # Weighted-average beta and hat-matrix diagonal
+    beta = np.zeros(X.shape[1])
+    d_avg = np.zeros(len(s))
+    for wi, a in zip(w, alphas):
+        if wi < _EPS_WEIGHT:
             continue
-        beta += w[i] * all_beta[i]
-        p_eff += w[i] * all_peff[i]
+        d = s2 / (s2 + a)
+        beta += wi * (Vt.T @ (d * Uty / np.maximum(s, _EPS)))
+        d_avg += wi * d
 
-    # LOO residuals in the original (unweighted) space
+    # Predictive residuals: LOO scaled by √(1−h²)
     residuals = y - X @ beta
-    loo_factor = 1.0 / max(1.0 - p_eff / n_train, 0.05)
-    loo = residuals * loo_factor
+    h_avg = (U**2) @ d_avg
+    loo = residuals / np.maximum(1 - h_avg, _EPS)
+    loo *= np.sqrt(np.maximum(1 - h_avg * h_avg, _EPS))
 
-    return beta, loo, loocv_min
+    return beta, loo, gcv_min
 
 
 # ── Shape₂: MDL-Gated Prior Shrinkage ──────────────────────────────────
