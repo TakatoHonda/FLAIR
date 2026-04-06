@@ -56,6 +56,7 @@ _BC_EXP_CLIP = 30  # Clip range for exp() in Box-Cox inverse (lam=0)
 _MIN_POSITIVE_FOR_BC = 10  # Minimum positive values for Box-Cox lambda estimation
 _MIN_COMPLETE = 3  # Minimum complete periods for non-degenerate mode
 _MAX_COMPLETE = 500  # Cap on complete periods (memory/speed guard)
+_LAG_SCALE = 100  # Anisotropic Ridge: scale factor for lag features (effectively unpenalizes)
 _SHAPE_K = 2  # Number of recent periods for Shape estimation (insensitive; see paper)
 _PHASE_NOISE_K = 50  # Number of recent periods for phase noise
 _N_ALPHAS = 25  # Number of log-spaced GCV alphas
@@ -609,7 +610,17 @@ def forecast(
         X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
 
     # ── One Ridge SA ────────────────────────────────────────────────���
+    # Anisotropic penalty: scale lag columns to remove Ridge shrinkage
+    # on AR coefficients.  Under LSR1 (L ∈ Hölder(2)), shrinking the lag
+    # coefficient toward zero imposes a stationarity prior inconsistent
+    # with the non-stationary L.  Scaling by _LAG_SCALE makes the
+    # effective penalty α/_LAG_SCALE² ≈ 0 on lag features.
+    for j in range(n_lag):
+        X[:, nb + j] *= _LAG_SCALE
     beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
+    for j in range(n_lag):
+        beta[nb + j] *= _LAG_SCALE
+        X[:, nb + j] /= _LAG_SCALE
 
     # ── Damped trend (LSR1 boundary extrapolation) ───────────────────
     phi = _estimate_phi(L_bc)
