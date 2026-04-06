@@ -56,7 +56,7 @@ _BC_EXP_CLIP = 30  # Clip range for exp() in Box-Cox inverse (lam=0)
 _MIN_POSITIVE_FOR_BC = 10  # Minimum positive values for Box-Cox lambda estimation
 _MIN_COMPLETE = 3  # Minimum complete periods for non-degenerate mode
 _MAX_COMPLETE = 500  # Cap on complete periods (memory/speed guard)
-_LAG_SCALE = 100  # Anisotropic Ridge: scale factor for lag features (effectively unpenalizes)
+_DIFF_TARGET = True  # LSR1 reparameterization: target ΔL_innov, shrink δ₂=1-β₂ → 0
 _SHAPE_K = 2  # Number of recent periods for Shape estimation (insensitive; see paper)
 _PHASE_NOISE_K = 50  # Number of recent periods for phase noise
 _N_ALPHAS = 25  # Number of log-spaced GCV alphas
@@ -605,22 +605,34 @@ def forecast(
 
     X = np.zeros((n_train, nf))
     X[:, :nb] = base[start:]
-    X[:, nb] = L_innov[start - 1 : -1]
-    if max_cp >= 2:
-        X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
 
-    # ── One Ridge SA ────────────────────────────────────────────────���
-    # Anisotropic penalty: scale lag columns to remove Ridge shrinkage
-    # on AR coefficients.  Under LSR1 (L ∈ Hölder(2)), shrinking the lag
-    # coefficient toward zero imposes a stationarity prior inconsistent
-    # with the non-stationary L.  Scaling by _LAG_SCALE makes the
-    # effective penalty α/_LAG_SCALE² ≈ 0 on lag features.
-    for j in range(n_lag):
-        X[:, nb + j] *= _LAG_SCALE
-    beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
-    for j in range(n_lag):
-        beta[nb + j] *= _LAG_SCALE
-        X[:, nb + j] /= _LAG_SCALE
+    if _DIFF_TARGET and n_train >= 3:
+        # ── LSR1 reparameterization ─────────────────────────────────
+        # Under the LSR1 model, L ∈ Hölder(2) implies the Level is
+        # smooth, so consecutive values satisfy L(i) ≈ L(i-1), i.e.,
+        # the "natural" AR coefficient β₂ ≈ 1.  Standard Ridge shrinks
+        # β₂ → 0 (stationarity prior), which is inconsistent.
+        #
+        # Reparameterize: let δ₂ = 1 - β₂.  Rewrite the model as
+        #   ΔL_innov[i] = β₀ + β₁(i/n) − δ₂ L_innov[i-1] + β₃ lag_cp
+        # Now Ridge shrinks δ₂ → 0, i.e., β₂ → 1 (random walk prior).
+        # No magic numbers.  Standard isotropic Ridge.
+        y_target = np.diff(L_innov[start - 1 :])  # ΔL_innov
+        X[:, nb] = -L_innov[start - 1 : -1]       # negated lag1 → δ₂ coeff
+        if max_cp >= 2:
+            X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
+
+        theta, loo_resid, _ = _ridge_sa(X, y_target)
+
+        # Recover original parameterization
+        beta = theta.copy()
+        beta[nb] = 1.0 - theta[nb]  # β₂ = 1 − δ₂
+    else:
+        # ── Standard Ridge (fallback for very short series) ──────────
+        X[:, nb] = L_innov[start - 1 : -1]
+        if max_cp >= 2:
+            X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
+        beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
 
     # ── Damped trend (LSR1 boundary extrapolation) ───────────────────
     phi = _estimate_phi(L_bc)
