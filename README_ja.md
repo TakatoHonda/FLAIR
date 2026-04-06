@@ -13,7 +13,7 @@
 ハイパーパラメータ 0。SVD 1回。CPU のみ。
 
 - **[Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting) で第1位** (25データセット・ゼロショット). Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205Mパラメータ, GPU)
-- **[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) で統計手法の中で最高精度** (97構成, 23データセット). relMASE **0.864**, relCRPS **0.614**
+- **[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) で統計手法の中で最高精度** (97構成, 23データセット). relMASE **0.857**, relCRPS **0.610**
 - **Python 約500行**。依存: numpy + scipy のみ
 
 ## 目次
@@ -148,7 +148,7 @@ pip install .
 
 | モデル | タイプ | relMASE | relCRPS | GPU |
 |--------|--------|:-------:|:-------:|:---:|
-| **FLAIR** | **統計** | **0.864** | **0.614** | **不要** |
+| **FLAIR** | **統計** | **0.857** | **0.610** | **不要** |
 | PatchTST | 深層学習 | 0.849 | 0.587 | 要 |
 | Moirai-large | 基盤モデル | 0.875 | 0.599 | 要 |
 | iTransformer | 深層学習 | 0.893 | 0.620 | 要 |

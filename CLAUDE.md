@@ -15,9 +15,9 @@
 ## FLAIR概要
 - **Factored Level And Interleaved Ridge**: 周期時系列を Level × Shape に分解し、Level を Ridge で予測
 - 1 SVD, 0 hyperparameters, CPU only
-- GIFT-Eval: relMASE=0.885, relCRPS=0.663 (97 configs, 23 datasets)
-- **Chronos-small (46M params, GPU) を超えた** (0.892)
-- Per-horizon: short=0.885, medium=0.865, long=0.906
+- GIFT-Eval: relMASE=0.857, relCRPS=0.610 (97 configs, 23 datasets)
+- **Chronos-small (46M params, GPU) を大幅に超えた** (0.892)
+- Per-horizon: short=0.854, medium=0.843, long=0.878
 
 ## 最重要ルール: やっても無駄なこと（絶対に再試行するな）
 
@@ -95,6 +95,7 @@
 | +Location Shift | y += max(1-min(y),1) | 0.920 | -6.4% |
 | +V5 removal | P=1 degeneration | 0.915 | -0.5% |
 | +MDL Period | BIC on SVD spectrum | 0.885 | -3.3% |
+| +LSR1 diff-target | random walk reparameterization | 0.857 | -3.2% |
 
 ## M5 実験結果 (2026-03-24)
 
