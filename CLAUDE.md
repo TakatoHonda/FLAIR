@@ -4,16 +4,13 @@
 
 | ブランチ | 用途 | push |
 |---|---|---|
-| `main` | 公開用（flair.py, README, LICENSE のみ） | origin に push OK |
-| `dev` | 日常作業（研究スクリプト、結果、ドキュメント全て追跡） | push しない |
-| `research-archive` | 旧 CompCast-research の履歴（凍結） | push しない |
+| `main` | 公開用（flaircast/, README, LICENSE, tests/ のみ） | origin に push OK |
+| `dev` | 開発用（パッケージの機能開発・テスト） | push しない |
 
 ### ルール
-- **普段の作業は `dev` ブランチで行う**（研究の進捗はここにコミット）
-- `flair.py` の公開更新時のみ `main` にチェックアウトしてマージ → push
-- `main` に直接 research/ や docs/ をコミットしない
-- `main` の .gitignore は研究ファイルを除外済み
-- `dev` の .gitignore は data/ と longhorizon/ のみ除外（大容量データ）
+- **普段の作業は `dev` ブランチで行う**
+- `main` への merge は公開リリース時のみ
+- 研究スクリプト・実験結果は `../research/` リポジトリで管理（このリポジトリには含めない）
 
 ## FLAIR概要
 - **Factored Level And Interleaved Ridge**: 周期時系列を Level × Shape に分解し、Level を Ridge で予測
@@ -128,18 +125,13 @@
 3. **間欠需要**: 30-40% の系列が50%以上ゼロ。Level×Shape は連続需要向け
 
 ## GIFT-Eval ベンチマーク図 (fig4)
-- `src/generate_fig4_benchmark.py` で生成
+- `../research/figures/generate_fig4_benchmark.py` で生成
 - フィルタ: agentic除外, test leakage除外, orchestration除外 (DeOS), 外れ値除外 (AutoETS, Crossformer, VISIT-1.0)
-- Prophet, MFLES はローカル結果 (`results/15_gift_eval/`)
+- Prophet, MFLES はローカル結果 (`../research/results/15_gift_eval/`)
 - リーダーボードデータ: `/tmp/gift-eval-space/results/` (HF space clone)
 
 ## ファイル構成
-- `flair.py` — コアアルゴリズム（公開用）
-- `research/benchmarks/run_gift_eval_flair_ds.py` — FLAIR-DS 本体 (Dirichlet Shape)
-- `research/benchmarks/run_gift_eval_flar9.py` — V9 / Ridge GCV-SA / 共通ユーティリティ
-- `research/benchmarks/evaluate_m5_flair_quick.py` — M5 評価 (Router 付き)
-- `research/benchmarks/evaluate_m5_flair_exog.py` — M5 評価 (外部変数注入)
-- `research/benchmarks/evaluate_m5_wrmsse.py` — M5 WRMSSE + 既存統計手法
-- `research/figures/generate_fig4_benchmark.py` — ベンチマーク散布図生成
-- `research/figures/visualize_flair_pipeline.py` — パイプライン可視化
-- `docs/flair_tech_report/` — テクニカルレポート + 図
+- `flaircast/` — パッケージソース（公開用）
+- `tests/` — テスト
+- `examples/` — 使用例
+- 研究用スクリプトは `../research/` を参照

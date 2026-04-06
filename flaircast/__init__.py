@@ -191,10 +191,7 @@ def _ridge_sa(
         beta += wi * (Vt.T @ (d * Uty / s))
         d_avg += wi * d
 
-    # Predictive residuals: LOO scaled by √(1−h²) to convert from
-    # training-point LOO variance σ²/(1−h) to prediction-point
-    # variance σ²(1+h).  Ratio = (1+h)(1−h) = 1−h², so the
-    # standard-deviation correction is √(1−h²).
+    # Predictive residuals: LOO scaled by √(1−h²)
     residuals = y - X @ beta
     h_avg = (U**2) @ d_avg
     loo = residuals / np.maximum(1 - h_avg, _EPS)
@@ -591,11 +588,6 @@ def forecast(
     beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
 
     # ── Stochastic Level paths (recursive noise injection) ────────────
-    # The same recursion as the point forecast, but with LOO residual
-    # noise injected at each step.  Errors propagate through the lag
-    # features exactly as the Ridge dynamics dictate — no √step, no
-    # scaling formula.  Mean-reverting series naturally saturate;
-    # random-walk series naturally grow as √step.
     noise_pool = loo_resid[rng.randint(0, len(loo_resid), size=(n_samples, m))]
     L_paths = np.column_stack(
         [np.tile(L_innov, (n_samples, 1)), np.zeros((n_samples, m))]

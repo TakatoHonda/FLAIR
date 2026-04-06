@@ -78,3 +78,8 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = ["scipy.*"]
 ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "statsforecast>=2.0.3",
+]
