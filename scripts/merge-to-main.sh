@@ -86,7 +86,7 @@ green "  Tree is clean."
 # ── Step 5: Run tests ─────────────────────────────────────────────────
 bold "Step 5: Installing deps and running tests..."
 uv sync --extra dev --quiet
-if uv run pytest tests/ --tb=short -q; then
+if uv run python -m pytest tests/ --tb=short -q; then
     green "  All tests passed."
 else
     red "ERROR: Tests failed. Aborting merge."
