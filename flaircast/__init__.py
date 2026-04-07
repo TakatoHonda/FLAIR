@@ -658,26 +658,24 @@ def forecast(
         forecast_pos = (n_complete + np.arange(m)) % cp_main
         L_hat_all = L_hat_all * S2[forecast_pos][np.newaxis, :]
 
-    # ── Phase noise (parametric, per-phase Gaussian) ─────────────────
-    # Relative residuals R[p,k] = (observed - fitted)/|fitted| capture
-    # phase-specific noise.  Instead of bootstrapping columns, draw from
-    # N(μ_p, σ²_p) per phase.  This extrapolates into tails beyond the
-    # observed range and requires fewer samples for stable quantiles.
+    # ── Phase noise (scenario-coherent column sampling) ──────────────
+    # R[p,k] = (observed - fitted)/|fitted| captures phase-specific noise.
+    # Each column of R is one historical period's residual pattern across
+    # all P phases.  Sampling entire columns preserves cross-phase
+    # correlation: all phases within one forecast block share the same
+    # historical period's deviation pattern.  This is not ad-hoc — it is
+    # the empirical distribution of the rank-1 residual, the natural
+    # uncertainty source for a factored model.
     fitted_mat = S_hist.T * L
     E = mat - fitted_mat
     K_r = min(_PHASE_NOISE_K, n_complete)
     R = E[:, -K_r:] / np.maximum(np.abs(fitted_mat[:, -K_r:]), _EPS_BOXCOX)
 
-    R_mean = R.mean(axis=1)   # (P,)
-    R_var = R.var(axis=1)     # (P,)
-
     step_idx = np.arange(horizon) // P
     phase_idx = np.arange(horizon) % P
 
-    phase_noise = (
-        R_mean[phase_idx][np.newaxis, :]
-        + rng.randn(n_samples, horizon) * np.sqrt(R_var[phase_idx])[np.newaxis, :]
-    )
+    col_idx = rng.randint(0, K_r, size=(n_samples, m))
+    phase_noise = R[phase_idx[np.newaxis, :], col_idx[:, step_idx]]
 
     # ── Assemble: Level_path × Shape × (1 + phase_noise) ───────────
     S_h = S_forecast[step_idx, phase_idx]
