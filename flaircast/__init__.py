@@ -372,53 +372,6 @@ def _estimate_shape(
     return S_forecast, S_hist, m
 
 
-def _estimate_gamma(mat: NDArray[np.floating], P: int, n_complete: int) -> float:
-    """Estimate seasonal strength γ ∈ [0, 1] from rank-1 explained variance.
-
-    γ = (r₁ − r_rand) / (1 − r_rand)
-
-    where r₁ = σ₁² / Σσᵢ² is the fraction of variance captured by the
-    first singular value, and r_rand ≈ 1/min(P, n_complete) is the expected
-    ratio for a random matrix (Marchenko-Pastur baseline).
-
-    When γ ≈ 1 the rank-1 seasonal pattern is dominant; when γ ≈ 0 the
-    period-folded matrix has no low-rank structure and Shape should be
-    dampened toward uniform.  This follows the same MDL principle used
-    for period selection and Shape₂ gating.
-    """
-    if P < 2 or n_complete < _MIN_COMPLETE:
-        return 1.0  # No meaningful periodicity check possible
-
-    s = np.linalg.svd(mat, compute_uv=False)
-    total = float(np.sum(s**2))
-    if total < _EPS_LOG:
-        return 1.0
-
-    rank1_ratio = float(s[0] ** 2 / total)
-    random_baseline = 1.0 / min(P, n_complete)
-    gamma = (rank1_ratio - random_baseline) / max(1.0 - random_baseline, _EPS)
-    return float(np.clip(gamma, 0.0, 1.0))
-
-
-def _dampen_shape(S: NDArray[np.floating], gamma: float) -> NDArray[np.floating]:
-    """Apply Shape dampening S^γ and re-normalize.
-
-    S can be 1D (P,) or 2D (m, P).
-    γ=1 returns S unchanged; γ=0 returns uniform 1/P.
-    Intermediate values smoothly reduce seasonal contrast while
-    preserving the relative phase ordering.
-    """
-    if gamma >= 1.0 - _EPS:
-        return S
-    S_d = np.power(np.maximum(S, _EPS_LOG), gamma)
-    if S_d.ndim == 1:
-        S_d /= max(float(S_d.sum()), _EPS)
-    else:
-        row_sums = S_d.sum(axis=1, keepdims=True)
-        S_d /= np.maximum(row_sums, _EPS)
-    return S_d
-
-
 def _compute_cross_periods(
     secondary: list[int],
     P: int,
@@ -559,11 +512,6 @@ def forecast(
         L,
         horizon,
     )
-
-    # ── Seasonal strength: dampen Shape when rank-1 structure is weak ────
-    gamma = _estimate_gamma(mat, P, n_complete)
-    S_forecast = _dampen_shape(S_forecast, gamma)
-    S_hist = _dampen_shape(S_hist, gamma)
 
     cross_periods, max_cp = _compute_cross_periods(
         secondary,
