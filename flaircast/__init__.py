@@ -629,14 +629,19 @@ def forecast(
 
     h_test = np.clip(h_test, 0.0, 10.0)
 
-    # ── Stochastic Level paths (Gaussian in Box-Cox space) ────────────
-    # In BC space, Level innovations are approximately Gaussian (that is
-    # the purpose of Box-Cox).  The LOO residual variance σ²_LOO gives
-    # the noise scale; h_test[j] scales it for each forecast step.
-    # The inverse Box-Cox then maps symmetric Gaussian noise to the
-    # correct distribution shape (right-skewed for λ→0, symmetric for λ=1).
+    # ── Stochastic Level paths (Student-t in Box-Cox space) ────────────
+    # When σ² is unknown and estimated from LOO residuals, the predictive
+    # distribution in BC space is Student-t with ν = n_train − p degrees
+    # of freedom, not Gaussian.  This is a standard result from Bayesian
+    # linear regression (marginalizing over σ²).
+    #
+    # The Student-t naturally produces heavier tails for short series
+    # (small ν) where uncertainty is highest.  As n → ∞, t_ν → N(0,1).
+    # Combined with the inverse Box-Cox, this gives an asymmetric,
+    # heavy-tailed predictive distribution with zero additional parameters.
     sigma2_loo = float(np.mean(loo_resid**2))
-    noise_pool = rng.randn(n_samples, m) * np.sqrt(
+    nu = max(n_train - nf, 3)  # degrees of freedom, floor at 3 for stability
+    noise_pool = rng.standard_t(df=nu, size=(n_samples, m)) * np.sqrt(
         sigma2_loo * (1.0 + h_test)
     )[np.newaxis, :]
     L_paths = np.column_stack(
