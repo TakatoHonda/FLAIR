@@ -629,12 +629,16 @@ def forecast(
 
     h_test = np.clip(h_test, 0.0, 10.0)
 
-    # ── Stochastic Level paths (LWCP-calibrated noise injection) ─────
-    # LOO residuals are LWCP-normalized (÷ sqrt(1+h_train)).  Resample
-    # and inflate by sqrt(1+h_test[j]) to restore correct variance at
-    # each forecast step.  Short horizons ≈ uniform; long horizons fan out.
-    idx = rng.randint(0, len(loo_resid), size=(n_samples, m))
-    noise_pool = loo_resid[idx] * np.sqrt(1.0 + h_test)[np.newaxis, :]
+    # ── Stochastic Level paths (Gaussian in Box-Cox space) ────────────
+    # In BC space, Level innovations are approximately Gaussian (that is
+    # the purpose of Box-Cox).  The LOO residual variance σ²_LOO gives
+    # the noise scale; h_test[j] scales it for each forecast step.
+    # The inverse Box-Cox then maps symmetric Gaussian noise to the
+    # correct distribution shape (right-skewed for λ→0, symmetric for λ=1).
+    sigma2_loo = float(np.mean(loo_resid**2))
+    noise_pool = rng.randn(n_samples, m) * np.sqrt(
+        sigma2_loo * (1.0 + h_test)
+    )[np.newaxis, :]
     L_paths = np.column_stack(
         [np.tile(L_innov, (n_samples, 1)), np.zeros((n_samples, m))]
     )  # (n_samples, n_complete + m)
@@ -654,17 +658,26 @@ def forecast(
         forecast_pos = (n_complete + np.arange(m)) % cp_main
         L_hat_all = L_hat_all * S2[forecast_pos][np.newaxis, :]
 
-    # ── Phase noise (SVD Residual Quantiles, unchanged) ─────────────
+    # ── Phase noise (parametric, per-phase Gaussian) ─────────────────
+    # Relative residuals R[p,k] = (observed - fitted)/|fitted| capture
+    # phase-specific noise.  Instead of bootstrapping columns, draw from
+    # N(μ_p, σ²_p) per phase.  This extrapolates into tails beyond the
+    # observed range and requires fewer samples for stable quantiles.
     fitted_mat = S_hist.T * L
     E = mat - fitted_mat
     K_r = min(_PHASE_NOISE_K, n_complete)
     R = E[:, -K_r:] / np.maximum(np.abs(fitted_mat[:, -K_r:]), _EPS_BOXCOX)
 
+    R_mean = R.mean(axis=1)   # (P,)
+    R_var = R.var(axis=1)     # (P,)
+
     step_idx = np.arange(horizon) // P
     phase_idx = np.arange(horizon) % P
 
-    col_idx = rng.randint(0, K_r, size=(n_samples, m))
-    phase_noise = R[phase_idx[np.newaxis, :], col_idx[:, step_idx]]
+    phase_noise = (
+        R_mean[phase_idx][np.newaxis, :]
+        + rng.randn(n_samples, horizon) * np.sqrt(R_var[phase_idx])[np.newaxis, :]
+    )
 
     # ── Assemble: Level_path × Shape × (1 + phase_noise) ───────────
     S_h = S_forecast[step_idx, phase_idx]
