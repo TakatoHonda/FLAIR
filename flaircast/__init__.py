@@ -629,49 +629,20 @@ def forecast(
 
     h_test = np.clip(h_test, 0.0, 10.0)
 
-    # ── Phase noise matrix (rank-1 residuals) ─────────────────────────
-    # R[p,k] = (observed - fitted)/|fitted| captures phase-specific noise.
-    # Computed once, shared by volatility forecast and phase noise sampling.
-    fitted_mat = S_hist.T * L
-    E = mat - fitted_mat
-    K_r = min(_PHASE_NOISE_K, n_complete)
-    R = E[:, -K_r:] / np.maximum(np.abs(fitted_mat[:, -K_r:]), _EPS_BOXCOX)
-
-    # ── Volatility forecast ────────────────────────────────────────────
-    # Under LSR1, both Level L(t) and noise variance σ²(t) are smooth
-    # functions of time.  Just as FLAIR forecasts Level with Ridge, it
-    # forecasts Volatility with the same principle: fit a linear trend
-    # to per-period residual magnitudes and extrapolate.
+    # ── Stochastic Level paths (Student-t in Box-Cox space) ────────────
+    # When σ² is unknown and estimated from LOO residuals, the predictive
+    # distribution in BC space is Student-t with ν = n_train − p degrees
+    # of freedom, not Gaussian.  This is a standard result from Bayesian
+    # linear regression (marginalizing over σ²).
     #
-    # v_k = RMS of phase-noise column k (per-period noise magnitude).
-    # Scale factor s_j = v̂_j / v̄ adjusts interval width per step.
-    # When volatility is rising, intervals widen; when falling, narrow.
-    # v̂ ≈ v̄ → s ≈ 1 → no change (reduces to constant-variance case).
-    v_k = np.sqrt(np.mean(R**2, axis=0))  # (K_r,) per-period RMS
-
-    if K_r >= 4:
-        t_v = np.arange(K_r, dtype=float) / K_r
-        t_v_c = t_v - t_v.mean()
-        v_mean = float(v_k.mean())
-        v_slope = float(np.sum(t_v_c * (v_k - v_mean)) / max(np.sum(t_v_c**2), _EPS))
-        vol_scale = np.empty(m)
-        for j in range(m):
-            t_fcast = 1.0 + (j + 0.5) / K_r
-            v_hat = v_mean + v_slope * (t_fcast - 0.5)
-            vol_scale[j] = max(v_hat / max(v_mean, _EPS), 0.2)
-        vol_scale = np.clip(vol_scale, 0.2, 5.0)
-    else:
-        vol_scale = np.ones(m)
-
-    # ── Stochastic Level paths (Student-t, volatility-scaled) ────────
-    # Three principles determine the noise distribution:
-    #   (1) Student-t from marginalizing over unknown σ² (Bayesian Ridge)
-    #   (2) h_test fan-out from Ridge leverage at each forecast step
-    #   (3) vol_scale from LSR1 volatility forecast (smooth σ²(t))
+    # The Student-t naturally produces heavier tails for short series
+    # (small ν) where uncertainty is highest.  As n → ∞, t_ν → N(0,1).
+    # Combined with the inverse Box-Cox, this gives an asymmetric,
+    # heavy-tailed predictive distribution with zero additional parameters.
     sigma2_loo = float(np.mean(loo_resid**2))
-    nu = max(n_train - nf, 3)
-    noise_pool = rng.standard_t(df=nu, size=(n_samples, m)) * (
-        np.sqrt(sigma2_loo * (1.0 + h_test)) * vol_scale
+    nu = max(n_train - nf, 3)  # degrees of freedom, floor at 3 for stability
+    noise_pool = rng.standard_t(df=nu, size=(n_samples, m)) * np.sqrt(
+        sigma2_loo * (1.0 + h_test)
     )[np.newaxis, :]
     L_paths = np.column_stack(
         [np.tile(L_innov, (n_samples, 1)), np.zeros((n_samples, m))]
@@ -684,7 +655,7 @@ def forecast(
             pred += beta[nb + 1] * L_paths[:, ti - max_cp]
         L_paths[:, ti] = pred + noise_pool[:, j]
 
-    # Point forecast = median path
+    # Point forecast = median path (noise_pool row 0 is arbitrary, use mean)
     L_hat_all = _bc_inv(L_paths[:, n_complete : n_complete + m] + last_L, lam)
 
     if use_deseason:
@@ -693,10 +664,17 @@ def forecast(
         L_hat_all = L_hat_all * S2[forecast_pos][np.newaxis, :]
 
     # ── Phase noise (scenario-coherent column sampling) ──────────────
+    # R[p,k] = (observed - fitted)/|fitted| captures phase-specific noise.
     # Each column of R is one historical period's residual pattern across
     # all P phases.  Sampling entire columns preserves cross-phase
     # correlation: all phases within one forecast block share the same
-    # historical period's deviation pattern.
+    # historical period's deviation pattern.  This is not ad-hoc — it is
+    # the empirical distribution of the rank-1 residual, the natural
+    # uncertainty source for a factored model.
+    fitted_mat = S_hist.T * L
+    E = mat - fitted_mat
+    K_r = min(_PHASE_NOISE_K, n_complete)
+    R = E[:, -K_r:] / np.maximum(np.abs(fitted_mat[:, -K_r:]), _EPS_BOXCOX)
 
     step_idx = np.arange(horizon) // P
     phase_idx = np.arange(horizon) % P
