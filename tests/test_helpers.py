@@ -135,11 +135,12 @@ class TestRidgeSA:
     def test_identity_system(self):
         X = np.eye(5)
         y = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        beta, loo, gcv_min = _ridge_sa(X, y)
+        beta, loo, gcv_min, Vt, s, d_avg = _ridge_sa(X, y)
         assert beta.shape == (5,)
         assert loo.shape == (5,)
         assert isinstance(gcv_min, float)
         assert gcv_min >= 0
+        assert Vt.shape[0] == s.shape[0] == d_avg.shape[0]
 
     def test_simple_regression(self):
         rng = np.random.RandomState(42)
@@ -147,7 +148,7 @@ class TestRidgeSA:
         X = np.column_stack([np.ones(n), np.arange(n, dtype=float) / n])
         true_beta = np.array([3.0, 2.0])
         y = X @ true_beta + rng.normal(0, 0.1, n)
-        beta, _loo, _gcv_min = _ridge_sa(X, y)
+        beta, _loo, _gcv_min, *_ = _ridge_sa(X, y)
         np.testing.assert_allclose(beta, true_beta, atol=0.5)
 
     def test_loo_residuals_reasonable(self):
@@ -155,7 +156,7 @@ class TestRidgeSA:
         n = 30
         X = np.column_stack([np.ones(n), rng.randn(n)])
         y = 2 * X[:, 1] + rng.normal(0, 0.5, n)
-        _, loo, _ = _ridge_sa(X, y)
+        _, loo, _, *_ = _ridge_sa(X, y)
         assert np.all(np.isfinite(loo))
         # LOO residuals should be in a reasonable range
         assert np.std(loo) < 10 * np.std(y)

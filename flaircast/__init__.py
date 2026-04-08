@@ -38,7 +38,7 @@ Example:
 
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.4.1"
 __all__ = ["FLAIR", "FREQ_TO_PERIOD", "FREQ_TO_PERIODS", "forecast"]
 
 import numpy as np
@@ -158,14 +158,17 @@ def _bc_inv(z: NDArray[np.floating], lam: float) -> NDArray[np.floating]:
 def _ridge_sa(
     X: NDArray[np.floating],
     y: NDArray[np.floating],
-) -> tuple[NDArray[np.floating], NDArray[np.floating], float]:
+) -> tuple[NDArray[np.floating], NDArray[np.floating], float,
+           NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
     """Ridge regression with LOOCV soft-average over 25 log-spaced alphas.
 
     Under the LSR1 model, this is local linear regression at the boundary
     u=1 with bandwidth h=∞ (global fit).  The regularization alpha is
     selected by LOOCV soft-averaging.
 
-    Returns (beta, loo_residuals, gcv_min).
+    Returns (beta, loo_residuals, gcv_min, Vt, s, d_avg).
+    LOO residuals are LWCP-normalized: e_i^LOO / sqrt(1 + h_ii).
+    SVD components are returned for test-point leverage computation.
     Everything from one SVD.
     """
     U, s, Vt = np.linalg.svd(X, full_matrices=False)
@@ -197,13 +200,17 @@ def _ridge_sa(
         beta += wi * (Vt.T @ (d * Uty / np.maximum(s, _EPS)))
         d_avg += wi * d
 
-    # Predictive residuals: LOO scaled by √(1−h²)
+    # LWCP-normalized LOO residuals: e_i^LOO / sqrt(1 + h_ii)
+    # Under LWCP (Fadnavis et al., 2026), this normalization removes
+    # leverage-dependent heteroscedasticity, producing approximately
+    # exchangeable scores.  The test-point interval is then scaled by
+    # sqrt(1 + h_test) to restore the correct variance at each horizon.
     residuals = y - X @ beta
     h_avg = (U**2) @ d_avg
-    loo = residuals / np.maximum(1 - h_avg, _EPS)
-    loo *= np.sqrt(np.maximum(1 - h_avg * h_avg, _EPS))
+    loo_raw = residuals / np.maximum(1 - h_avg, _EPS)
+    loo = loo_raw / np.sqrt(np.maximum(1 + h_avg, _EPS))
 
-    return beta, loo, gcv_min
+    return beta, loo, gcv_min, Vt, s, d_avg
 
 
 # ── Shape₂: MDL-Gated Prior Shrinkage ──────────────────────────────────
@@ -365,53 +372,6 @@ def _estimate_shape(
     return S_forecast, S_hist, m
 
 
-def _estimate_gamma(mat: NDArray[np.floating], P: int, n_complete: int) -> float:
-    """Estimate seasonal strength γ ∈ [0, 1] from rank-1 explained variance.
-
-    γ = (r₁ − r_rand) / (1 − r_rand)
-
-    where r₁ = σ₁² / Σσᵢ² is the fraction of variance captured by the
-    first singular value, and r_rand ≈ 1/min(P, n_complete) is the expected
-    ratio for a random matrix (Marchenko-Pastur baseline).
-
-    When γ ≈ 1 the rank-1 seasonal pattern is dominant; when γ ≈ 0 the
-    period-folded matrix has no low-rank structure and Shape should be
-    dampened toward uniform.  This follows the same MDL principle used
-    for period selection and Shape₂ gating.
-    """
-    if P < 2 or n_complete < _MIN_COMPLETE:
-        return 1.0  # No meaningful periodicity check possible
-
-    s = np.linalg.svd(mat, compute_uv=False)
-    total = float(np.sum(s**2))
-    if total < _EPS_LOG:
-        return 1.0
-
-    rank1_ratio = float(s[0] ** 2 / total)
-    random_baseline = 1.0 / min(P, n_complete)
-    gamma = (rank1_ratio - random_baseline) / max(1.0 - random_baseline, _EPS)
-    return float(np.clip(gamma, 0.0, 1.0))
-
-
-def _dampen_shape(S: NDArray[np.floating], gamma: float) -> NDArray[np.floating]:
-    """Apply Shape dampening S^γ and re-normalize.
-
-    S can be 1D (P,) or 2D (m, P).
-    γ=1 returns S unchanged; γ=0 returns uniform 1/P.
-    Intermediate values smoothly reduce seasonal contrast while
-    preserving the relative phase ordering.
-    """
-    if gamma >= 1.0 - _EPS:
-        return S
-    S_d = np.power(np.maximum(S, _EPS_LOG), gamma)
-    if S_d.ndim == 1:
-        S_d /= max(float(S_d.sum()), _EPS)
-    else:
-        row_sums = S_d.sum(axis=1, keepdims=True)
-        S_d /= np.maximum(row_sums, _EPS)
-    return S_d
-
-
 def _compute_cross_periods(
     secondary: list[int],
     P: int,
@@ -506,7 +466,18 @@ def forecast(
         raise ValueError("y must not be empty")
 
     rng = np.random.RandomState(seed)
-    y = np.nan_to_num(y_arr, nan=0.0)
+    # Interpolate NaN instead of filling with 0 (which biases Shape/Level)
+    y = np.asarray(y_arr, dtype=float).copy()
+    nan_mask = np.isnan(y)
+    if nan_mask.any():
+        valid = ~nan_mask
+        if valid.sum() >= 2:
+            idx = np.arange(len(y))
+            y[nan_mask] = np.interp(idx[nan_mask], idx[valid], y[valid])
+        elif valid.sum() == 1:
+            y[nan_mask] = y[valid][0]
+        else:
+            y[:] = 0.0
     # Location shift: make all values positive for multiplicative decomposition
     y_floor = y.min()
     y_shift = max(1 - y_floor, 1.0)  # shift so min(y) >= 1
@@ -552,11 +523,6 @@ def forecast(
         L,
         horizon,
     )
-
-    # ── Seasonal strength: dampen Shape when rank-1 structure is weak ────
-    gamma = _estimate_gamma(mat, P, n_complete)
-    S_forecast = _dampen_shape(S_forecast, gamma)
-    S_hist = _dampen_shape(S_hist, gamma)
 
     cross_periods, max_cp = _compute_cross_periods(
         secondary,
@@ -622,7 +588,7 @@ def forecast(
         if max_cp >= 2:
             X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
 
-        theta, loo_resid, _ = _ridge_sa(X, y_target)
+        theta, loo_resid, _, Vt_r, s_r, d_avg_r = _ridge_sa(X, y_target)
 
         # Recover original parameterization
         beta = theta.copy()
@@ -632,7 +598,8 @@ def forecast(
         X[:, nb] = L_innov[start - 1 : -1]
         if max_cp >= 2:
             X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
-        beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
+        # Short series: no PLOOCV (insufficient data for meaningful weights)
+        beta, loo_resid, _, Vt_r, s_r, d_avg_r = _ridge_sa(X, L_innov[start:])
 
     # ── Damped trend (LSR1 boundary extrapolation) ───────────────────
     phi = _estimate_phi(L_bc)
@@ -645,8 +612,50 @@ def forecast(
     else:
         _damped_trend = np.full(m, (n_complete - 1.0) / n_complete)
 
-    # ── Stochastic Level paths (recursive noise injection) ────────────
-    noise_pool = loo_resid[rng.randint(0, len(loo_resid), size=(n_samples, m))]
+    # ── Test-point leverages for LWCP ──────────────────────────────────
+    # Compute h_test[j] for each forecast step using the point-forecast
+    # feature vector projected through the Ridge SVD.  h_test grows with
+    # horizon because trend extrapolates and lags become predicted values.
+    h_test = np.empty(m)
+    L_point = np.concatenate([L_innov, np.zeros(m)])
+    for j in range(m):
+        ti = n_complete + j
+        pred_pt = beta[0] + beta[1] * _damped_trend[j] + beta[nb] * L_point[ti - 1]
+        if max_cp >= 2:
+            pred_pt += beta[nb + 1] * L_point[ti - max_cp]
+        L_point[ti] = pred_pt
+
+        x_j = np.zeros(nf)
+        x_j[0] = 1.0
+        x_j[1] = _damped_trend[j]
+        if _DIFF_TARGET and n_train >= 3:
+            x_j[nb] = -L_point[ti - 1]
+        else:
+            x_j[nb] = L_point[ti - 1]
+        if max_cp >= 2:
+            x_j[nb + 1] = L_point[ti - max_cp]
+
+        v = Vt_r @ x_j
+        u_test = v / np.maximum(s_r, _EPS)
+        h_test[j] = float(np.sum(u_test**2 * d_avg_r))
+
+    h_test = np.clip(h_test, 0.0, 10.0)
+
+    # ── Stochastic Level paths (Student-t in Box-Cox space) ────────────
+    # When σ² is unknown and estimated from LOO residuals, the predictive
+    # distribution in BC space is Student-t with ν = n_train − p degrees
+    # of freedom, not Gaussian.  This is a standard result from Bayesian
+    # linear regression (marginalizing over σ²).
+    #
+    # The Student-t naturally produces heavier tails for short series
+    # (small ν) where uncertainty is highest.  As n → ∞, t_ν → N(0,1).
+    # Combined with the inverse Box-Cox, this gives an asymmetric,
+    # heavy-tailed predictive distribution with zero additional parameters.
+    sigma2_loo = float(np.mean(loo_resid**2))
+    nu = max(n_train - nf, 3)  # degrees of freedom, floor at 3 for stability
+    noise_pool = rng.standard_t(df=nu, size=(n_samples, m)) * np.sqrt(
+        sigma2_loo * (1.0 + h_test)
+    )[np.newaxis, :]
     L_paths = np.column_stack(
         [np.tile(L_innov, (n_samples, 1)), np.zeros((n_samples, m))]
     )  # (n_samples, n_complete + m)
@@ -666,7 +675,14 @@ def forecast(
         forecast_pos = (n_complete + np.arange(m)) % cp_main
         L_hat_all = L_hat_all * S2[forecast_pos][np.newaxis, :]
 
-    # ── Phase noise (SVD Residual Quantiles, unchanged) ─────────────
+    # ── Phase noise (scenario-coherent column sampling) ──────────────
+    # R[p,k] = (observed - fitted)/|fitted| captures phase-specific noise.
+    # Each column of R is one historical period's residual pattern across
+    # all P phases.  Sampling entire columns preserves cross-phase
+    # correlation: all phases within one forecast block share the same
+    # historical period's deviation pattern.  This is not ad-hoc — it is
+    # the empirical distribution of the rank-1 residual, the natural
+    # uncertainty source for a factored model.
     fitted_mat = S_hist.T * L
     E = mat - fitted_mat
     K_r = min(_PHASE_NOISE_K, n_complete)
@@ -683,13 +699,27 @@ def forecast(
 
     samples = L_hat_all[:, step_idx] * S_h[np.newaxis, :] * (1 + phase_noise) - y_shift
 
-    y_orig = y - y_shift
-    lookback = max(horizon * 2, _PHASE_NOISE_K)
-    y_lo, y_hi = y_orig[-lookback:].min(), y_orig[-lookback:].max()
-    y_range = max(y_hi - y_lo, _EPS_SHAPE)
+    # ── Clip to historical range ──────────────────────────────────────
+    # Inverse Box-Cox with recursive simulation can produce extreme values.
+    # Clip to [y_lo - range, y_hi + range] based on the recent history,
+    # consistent with the P=1 fallback path (±10σ clipping).
+    tail = y_arr[-min(horizon * 2, max(50, P * 3)):]
+    y_lo, y_hi = float(np.nanmin(tail)), float(np.nanmax(tail))
+    y_range = max(y_hi - y_lo, max(abs(y_hi), abs(y_lo), 1.0))
     samples = np.clip(samples, y_lo - y_range, y_hi + y_range)
 
-    return np.asarray(np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0), dtype=np.float64)
+    # ── Post-hoc interval calibration ─────────────────────────────────
+    # Student-t noise during recursion creates path diversity that helps
+    # the median (point forecast) via Box-Cox asymmetry.  But the heavy
+    # tails inflate interval width by sqrt(nu/(nu-2)), which is 1.73x
+    # for nu=3.  Shrinking samples toward the median removes this excess
+    # while preserving the median exactly (monotone, centered transform).
+    if nu < 50:
+        shrink = np.sqrt(max(nu - 2.0, 0.5) / nu)
+        med = np.median(samples, axis=0, keepdims=True)
+        samples = med + shrink * (samples - med)
+
+    return np.asarray(np.nan_to_num(samples, posinf=0.0, neginf=0.0), dtype=np.float64)
 
 
 # ── Class API ───────────────────────────────────────────────────────────
