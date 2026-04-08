@@ -699,17 +699,6 @@ def forecast(
 
     samples = L_hat_all[:, step_idx] * S_h[np.newaxis, :] * (1 + phase_noise) - y_shift
 
-    # ── Post-hoc interval calibration ─────────────────────────────────
-    # Student-t noise during recursion creates path diversity that helps
-    # the median (point forecast) via Box-Cox asymmetry.  But the heavy
-    # tails inflate interval width by sqrt(nu/(nu-2)), which is 1.73x
-    # for nu=3.  Shrinking samples toward the median removes this excess
-    # while preserving the median exactly (monotone, centered transform).
-    if nu < 50:
-        shrink = np.sqrt(max(nu - 2.0, 0.5) / nu)
-        med = np.median(samples, axis=0, keepdims=True)
-        samples = med + shrink * (samples - med)
-
     return np.asarray(np.nan_to_num(samples, posinf=0.0, neginf=0.0), dtype=np.float64)
 
 
