@@ -158,8 +158,14 @@ def _bc_inv(z: NDArray[np.floating], lam: float) -> NDArray[np.floating]:
 def _ridge_sa(
     X: NDArray[np.floating],
     y: NDArray[np.floating],
-) -> tuple[NDArray[np.floating], NDArray[np.floating], float,
-           NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
+) -> tuple[
+    NDArray[np.floating],
+    NDArray[np.floating],
+    float,
+    NDArray[np.floating],
+    NDArray[np.floating],
+    NDArray[np.floating],
+]:
     """Ridge regression with LOOCV soft-average over 25 log-spaced alphas.
 
     Under the LSR1 model, this is local linear regression at the boundary
@@ -653,9 +659,10 @@ def forecast(
     # heavy-tailed predictive distribution with zero additional parameters.
     sigma2_loo = float(np.mean(loo_resid**2))
     nu = max(n_train - nf, 3)  # degrees of freedom, floor at 3 for stability
-    noise_pool = rng.standard_t(df=nu, size=(n_samples, m)) * np.sqrt(
-        sigma2_loo * (1.0 + h_test)
-    )[np.newaxis, :]
+    noise_pool = (
+        rng.standard_t(df=nu, size=(n_samples, m))
+        * np.sqrt(sigma2_loo * (1.0 + h_test))[np.newaxis, :]
+    )
     L_paths = np.column_stack(
         [np.tile(L_innov, (n_samples, 1)), np.zeros((n_samples, m))]
     )  # (n_samples, n_complete + m)
@@ -703,7 +710,7 @@ def forecast(
     # Inverse Box-Cox with recursive simulation can produce extreme values.
     # Clip to [y_lo - range, y_hi + range] based on the recent history,
     # consistent with the P=1 fallback path (±10σ clipping).
-    tail = y_arr[-min(horizon * 2, max(50, P * 3)):]
+    tail = y_arr[-min(horizon * 2, max(50, P * 3)) :]
     y_lo, y_hi = float(np.nanmin(tail)), float(np.nanmax(tail))
     y_range = max(y_hi - y_lo, max(abs(y_hi), abs(y_lo), 1.0))
     samples = np.clip(samples, y_lo - y_range, y_hi + y_range)
