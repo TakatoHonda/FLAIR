@@ -466,7 +466,18 @@ def forecast(
         raise ValueError("y must not be empty")
 
     rng = np.random.RandomState(seed)
-    y = np.nan_to_num(y_arr, nan=0.0)
+    # Interpolate NaN instead of filling with 0 (which biases Shape/Level)
+    y = np.asarray(y_arr, dtype=float).copy()
+    nan_mask = np.isnan(y)
+    if nan_mask.any():
+        valid = ~nan_mask
+        if valid.sum() >= 2:
+            idx = np.arange(len(y))
+            y[nan_mask] = np.interp(idx[nan_mask], idx[valid], y[valid])
+        elif valid.sum() == 1:
+            y[nan_mask] = y[valid][0]
+        else:
+            y[:] = 0.0
     # Location shift: make all values positive for multiplicative decomposition
     y_floor = y.min()
     y_shift = max(1 - y_floor, 1.0)  # shift so min(y) >= 1
@@ -587,6 +598,7 @@ def forecast(
         X[:, nb] = L_innov[start - 1 : -1]
         if max_cp >= 2:
             X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
+        # Short series: no PLOOCV (insufficient data for meaningful weights)
         beta, loo_resid, _, Vt_r, s_r, d_avg_r = _ridge_sa(X, L_innov[start:])
 
     # ── Damped trend (LSR1 boundary extrapolation) ───────────────────
@@ -687,13 +699,7 @@ def forecast(
 
     samples = L_hat_all[:, step_idx] * S_h[np.newaxis, :] * (1 + phase_noise) - y_shift
 
-    y_orig = y - y_shift
-    lookback = max(horizon * 2, _PHASE_NOISE_K)
-    y_lo, y_hi = y_orig[-lookback:].min(), y_orig[-lookback:].max()
-    y_range = max(y_hi - y_lo, _EPS_SHAPE)
-    samples = np.clip(samples, y_lo - y_range, y_hi + y_range)
-
-    return np.asarray(np.nan_to_num(samples, nan=0.0, posinf=0.0, neginf=0.0), dtype=np.float64)
+    return np.asarray(np.nan_to_num(samples, posinf=0.0, neginf=0.0), dtype=np.float64)
 
 
 # ── Class API ───────────────────────────────────────────────────────────
