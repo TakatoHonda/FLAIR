@@ -699,13 +699,21 @@ def forecast(
 
     samples = L_hat_all[:, step_idx] * S_h[np.newaxis, :] * (1 + phase_noise) - y_shift
 
+    # ── Clip to historical range ──────────────────────────────────────
+    # Inverse Box-Cox with recursive simulation can produce extreme values.
+    # Clip to [y_lo - range, y_hi + range] based on the recent history,
+    # consistent with the P=1 fallback path (±10σ clipping).
+    tail = y_arr[-min(horizon * 2, max(50, P * 3)):]
+    y_lo, y_hi = float(np.nanmin(tail)), float(np.nanmax(tail))
+    y_range = max(y_hi - y_lo, max(abs(y_hi), abs(y_lo), 1.0))
+    samples = np.clip(samples, y_lo - y_range, y_hi + y_range)
+
     # ── Post-hoc interval calibration ─────────────────────────────────
     # Student-t noise during recursion creates path diversity that helps
     # the median (point forecast) via Box-Cox asymmetry.  But the heavy
     # tails inflate interval width by sqrt(nu/(nu-2)), which is 1.73x
     # for nu=3.  Shrinking samples toward the median removes this excess
     # while preserving the median exactly (monotone, centered transform).
-    # Verified: median diff = 0.000000 across 100 series (A/B test).
     if nu < 50:
         shrink = np.sqrt(max(nu - 2.0, 0.5) / nu)
         med = np.median(samples, axis=0, keepdims=True)
