@@ -461,6 +461,8 @@ def forecast(
     freq: str,
     n_samples: int = 200,
     seed: int | None = None,
+    X_hist: ArrayLike | None = None,
+    X_future: ArrayLike | None = None,
 ) -> NDArray[np.floating]:
     """Generate probabilistic forecasts for a univariate time series.
 
@@ -476,6 +478,12 @@ def forecast(
         Number of sample paths for probabilistic forecast.
     seed : int or None
         Random seed for reproducibility. If None, uses OS entropy.
+    X_hist : array-like, shape (n, k) or (n,), optional
+        Historical exogenous variables aligned with y_raw.
+        Must be provided together with X_future.
+    X_future : array-like, shape (horizon, k) or (horizon,), optional
+        Future exogenous variables for the forecast horizon.
+        Must be provided together with X_hist.
 
     Returns
     -------
@@ -488,6 +496,7 @@ def forecast(
         If freq is not a string, or horizon/n_samples are not integers.
     ValueError
         If horizon < 1, n_samples < 1, y is empty, or y is not 1-dimensional.
+        If only one of X_hist/X_future is provided, or shapes are inconsistent.
     """
     if not isinstance(freq, str):
         raise TypeError(f"freq must be a string, got {type(freq).__name__}")
@@ -504,6 +513,42 @@ def forecast(
         raise ValueError(f"y must be 1-dimensional, got shape {y_arr.shape}")
     if len(y_arr) == 0:
         raise ValueError("y must not be empty")
+
+    # ── Exogenous variable validation ────────────────────────────────
+    has_exog = X_hist is not None or X_future is not None
+    if has_exog:
+        if X_hist is None or X_future is None:
+            raise ValueError("X_hist and X_future must be provided together")
+        X_hist_arr = np.asarray(X_hist, dtype=float)
+        X_future_arr = np.asarray(X_future, dtype=float)
+        if X_hist_arr.ndim == 1:
+            X_hist_arr = X_hist_arr[:, np.newaxis]
+        if X_future_arr.ndim == 1:
+            X_future_arr = X_future_arr[:, np.newaxis]
+        if X_hist_arr.ndim != 2:
+            raise ValueError(f"X_hist must be 1D or 2D, got shape {X_hist_arr.shape}")
+        if X_future_arr.ndim != 2:
+            raise ValueError(f"X_future must be 1D or 2D, got shape {X_future_arr.shape}")
+        if X_hist_arr.shape[0] != len(y_arr):
+            raise ValueError(
+                f"X_hist length ({X_hist_arr.shape[0]}) must match y length ({len(y_arr)})"
+            )
+        if X_future_arr.shape[0] != horizon:
+            raise ValueError(
+                f"X_future length ({X_future_arr.shape[0]}) must match horizon ({horizon})"
+            )
+        if X_hist_arr.shape[1] != X_future_arr.shape[1]:
+            raise ValueError(
+                f"X_hist columns ({X_hist_arr.shape[1]}) must match "
+                f"X_future columns ({X_future_arr.shape[1]})"
+            )
+        n_exog = X_hist_arr.shape[1]
+        X_hist_arr = np.nan_to_num(X_hist_arr, nan=0.0)
+        X_future_arr = np.nan_to_num(X_future_arr, nan=0.0)
+    else:
+        X_hist_arr = None
+        X_future_arr = None
+        n_exog = 0
 
     rng = np.random.RandomState(seed)
     y = np.nan_to_num(y_arr, nan=0.0)
@@ -534,6 +579,9 @@ def forecast(
 
     if n_complete > _MAX_COMPLETE:
         y = y[-(_MAX_COMPLETE * P) :]
+        if has_exog:
+            assert X_hist_arr is not None
+            X_hist_arr = X_hist_arr[-(_MAX_COMPLETE * P) :]
         n = len(y)
         n_complete = n // P
 
@@ -543,6 +591,20 @@ def forecast(
     # ── Reshape ──────────────────────────────────────────────────────
     mat = y_trim.reshape(n_complete, P).T  # (P, n_complete)
     L = mat.sum(axis=0)
+
+    # ── Aggregate exogenous to Level time scale ──────────────────────
+    X_L: NDArray[np.floating] | None = None
+    X_future_L: NDArray[np.floating] | None = None
+    if has_exog:
+        assert X_hist_arr is not None and X_future_arr is not None
+        X_hist_trim = X_hist_arr[-usable:]
+        X_L = X_hist_trim.reshape(n_complete, P, n_exog).mean(axis=1)  # (n_complete, n_exog)
+        m_exog = int(np.ceil(horizon / P))
+        X_future_L = np.zeros((m_exog, n_exog))
+        for j in range(m_exog):
+            s = j * P
+            e = min((j + 1) * P, horizon)
+            X_future_L[j] = X_future_arr[s:e].mean(axis=0)
 
     S_forecast, S_hist, m = _estimate_shape(
         mat,
@@ -603,36 +665,79 @@ def forecast(
     n_lag = 1 + (1 if max_cp >= 2 else 0)
     nf = nb + n_lag
 
-    X = np.zeros((n_train, nf))
-    X[:, :nb] = base[start:]
+    # ── Build base feature matrix (intercept + trend + lags) ─────────
+    X_base = np.zeros((n_train, nf))
+    X_base[:, :nb] = base[start:]
 
     if _DIFF_TARGET and n_train >= 3:
         # ── LSR1 reparameterization ─────────────────────────────────
-        # Under the LSR1 model, L ∈ Hölder(2) implies the Level is
-        # smooth, so consecutive values satisfy L(i) ≈ L(i-1), i.e.,
-        # the "natural" AR coefficient β₂ ≈ 1.  Standard Ridge shrinks
-        # β₂ → 0 (stationarity prior), which is inconsistent.
-        #
-        # Reparameterize: let δ₂ = 1 - β₂.  Rewrite the model as
-        #   ΔL_innov[i] = β₀ + β₁(i/n) − δ₂ L_innov[i-1] + β₃ lag_cp
-        # Now Ridge shrinks δ₂ → 0, i.e., β₂ → 1 (random walk prior).
-        # No magic numbers.  Standard isotropic Ridge.
         y_target = np.diff(L_innov[start - 1 :])  # ΔL_innov
-        X[:, nb] = -L_innov[start - 1 : -1]  # negated lag1 → δ₂ coeff
+        X_base[:, nb] = -L_innov[start - 1 : -1]  # negated lag1 → δ₂ coeff
         if max_cp >= 2:
-            X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
-
-        theta, loo_resid, _ = _ridge_sa(X, y_target)
-
-        # Recover original parameterization
-        beta = theta.copy()
-        beta[nb] = 1.0 - theta[nb]  # β₂ = 1 − δ₂
+            X_base[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
+        is_diff = True
     else:
         # ── Standard Ridge (fallback for very short series) ──────────
-        X[:, nb] = L_innov[start - 1 : -1]
+        X_base[:, nb] = L_innov[start - 1 : -1]
         if max_cp >= 2:
-            X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
-        beta, loo_resid, _ = _ridge_sa(X, L_innov[start:])
+            X_base[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
+        y_target = L_innov[start:]
+        is_diff = False
+
+    # ── BIC-gated exogenous variable selection ─────────────────────────
+    # Compare 3 configs: (0) no exog, (1) current exog,
+    # (2) current + lag-1 exog.
+    # Selection uses BIC = n·log(GCV) + k·log(n), the same MDL principle
+    # FLAIR uses for period selection and Shape₂ gating.  The k·log(n)
+    # penalty prevents exogenous variables from being included when they
+    # improve in-sample fit but add complexity that hurts generalization.
+    exog_mode = 0  # 0=none, 1=current, 2=current+lagged
+
+    if has_exog:
+        assert X_L is not None
+        exog_current = X_L[start:]  # (n_train, n_exog)
+
+        # Lagged exogenous (shifted by 1 Level step)
+        X_L_lag = np.empty_like(X_L)
+        X_L_lag[0] = X_L[0]
+        X_L_lag[1:] = X_L[:-1]
+        exog_lagged = X_L_lag[start:]  # (n_train, n_exog)
+
+        # Config 0: no exogenous
+        theta_0, loo_0, gcv_0 = _ridge_sa(X_base, y_target)
+
+        # Config 1: current exogenous only
+        X_c1 = np.column_stack([X_base, exog_current])
+        theta_1, loo_1, gcv_1 = _ridge_sa(X_c1, y_target)
+
+        # Config 2: current + lagged exogenous
+        X_c2 = np.column_stack([X_base, exog_current, exog_lagged])
+        theta_2, loo_2, gcv_2 = _ridge_sa(X_c2, y_target)
+
+        # BIC-based model selection: n·log(GCV) + k·log(n)
+        log_n = np.log(max(n_train, 2))
+        bic_scores = [
+            n_train * np.log(max(gcv_0, _EPS_LOG)) + nf * log_n,
+            n_train * np.log(max(gcv_1, _EPS_LOG)) + (nf + n_exog) * log_n,
+            n_train * np.log(max(gcv_2, _EPS_LOG)) + (nf + 2 * n_exog) * log_n,
+        ]
+        best_config = int(np.argmin(bic_scores))
+        if best_config == 0:
+            theta, loo_resid = theta_0, loo_0
+            exog_mode = 0
+        elif best_config == 1:
+            theta, loo_resid = theta_1, loo_1
+            exog_mode = 1
+        else:
+            theta, loo_resid = theta_2, loo_2
+            exog_mode = 2
+    else:
+        theta, loo_resid, _ = _ridge_sa(X_base, y_target)
+
+    # Recover original parameterization
+    beta = theta.copy()
+    if is_diff:
+        beta[nb] = 1.0 - theta[nb]  # β₂ = 1 − δ₂
 
     # ── Damped trend (LSR1 boundary extrapolation) ───────────────────
     phi = _estimate_phi(L_bc)
@@ -645,6 +750,15 @@ def forecast(
     else:
         _damped_trend = np.full(m, (n_complete - 1.0) / n_complete)
 
+    # ── Build future lagged exogenous for prediction ──────────────────
+    X_future_L_lag: NDArray[np.floating] | None = None
+    if has_exog and exog_mode >= 2:
+        assert X_L is not None and X_future_L is not None
+        X_future_L_lag = np.empty_like(X_future_L)
+        X_future_L_lag[0] = X_L[-1]  # last historical Level-aggregated value
+        if len(X_future_L) > 1:
+            X_future_L_lag[1:] = X_future_L[:-1]
+
     # ── Stochastic Level paths (recursive noise injection) ────────────
     noise_pool = loo_resid[rng.randint(0, len(loo_resid), size=(n_samples, m))]
     L_paths = np.column_stack(
@@ -656,6 +770,13 @@ def forecast(
         pred = beta[0] + beta[1] * _damped_trend[j] + beta[nb] * L_paths[:, ti - 1]
         if max_cp >= 2:
             pred += beta[nb + 1] * L_paths[:, ti - max_cp]
+        if exog_mode == 1:
+            assert X_future_L is not None
+            pred += X_future_L[j] @ beta[nf : nf + n_exog]
+        elif exog_mode == 2:
+            assert X_future_L is not None and X_future_L_lag is not None
+            pred += X_future_L[j] @ beta[nf : nf + n_exog]
+            pred += X_future_L_lag[j] @ beta[nf + n_exog : nf + 2 * n_exog]
         L_paths[:, ti] = pred + noise_pool[:, j]
 
     # Point forecast = median path (noise_pool row 0 is arbitrary, use mean)
@@ -734,6 +855,8 @@ class FLAIR:
         horizon: int,
         n_samples: int | None = None,
         seed: int | None = None,
+        X_hist: ArrayLike | None = None,
+        X_future: ArrayLike | None = None,
     ) -> NDArray[np.floating]:
         """Generate probabilistic forecasts.
 
@@ -747,6 +870,10 @@ class FLAIR:
             Override the default number of sample paths.
         seed : int or None, optional
             Override the default random seed.
+        X_hist : array-like, shape (n, k) or (n,), optional
+            Historical exogenous variables aligned with y.
+        X_future : array-like, shape (horizon, k) or (horizon,), optional
+            Future exogenous variables for the forecast horizon.
 
         Returns
         -------
@@ -759,6 +886,8 @@ class FLAIR:
             self.freq,
             n_samples if n_samples is not None else self.n_samples,
             seed if seed is not None else self.seed,
+            X_hist=X_hist,
+            X_future=X_future,
         )
 
 
