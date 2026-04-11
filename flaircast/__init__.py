@@ -62,7 +62,6 @@ _PHASE_NOISE_K = 50  # Number of recent periods for phase noise
 _N_ALPHAS = 25  # Number of log-spaced GCV alphas
 _ALPHA_LOG_MIN = -4  # log10 of minimum Ridge alpha
 _ALPHA_LOG_MAX = 4  # log10 of maximum Ridge alpha
-_DIAG: dict = {}  # Diagnostic output (populated when non-empty)
 
 # ── Calendar tables ──────────────────────────────────────────────────────
 
