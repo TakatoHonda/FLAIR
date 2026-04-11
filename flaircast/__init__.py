@@ -427,6 +427,8 @@ def forecast(
     freq: str,
     n_samples: int = 200,
     seed: int | None = None,
+    X_hist: ArrayLike | None = None,
+    X_future: ArrayLike | None = None,
 ) -> NDArray[np.floating]:
     """Generate probabilistic forecasts for a univariate time series.
 
@@ -442,6 +444,14 @@ def forecast(
         Number of sample paths for probabilistic forecast.
     seed : int or None
         Random seed for reproducibility. If None, uses OS entropy.
+    X_hist : array-like, shape (n, k) or (n,), optional
+        Historical exogenous variables aligned with y_raw.  Aggregated to
+        the Level (per-period) timescale via period mean and z-scored
+        using training statistics before joining the Level Ridge.  Must
+        be provided together with X_future.
+    X_future : array-like, shape (horizon, k) or (horizon,), optional
+        Future exogenous variables for the forecast horizon.  Same
+        treatment as X_hist.  Must be provided together with X_hist.
 
     Returns
     -------
@@ -454,6 +464,21 @@ def forecast(
         If freq is not a string, or horizon/n_samples are not integers.
     ValueError
         If horizon < 1, n_samples < 1, y is empty, or y is not 1-dimensional.
+        If only one of X_hist/X_future is provided, or shapes are inconsistent.
+
+    Notes
+    -----
+    Standardized exog columns are appended directly to the Level Ridge
+    feature matrix.  No separate gating step is used: FLAIR's existing
+    LOOCV soft-averaged Ridge already shrinks columns whose contribution
+    to LOO error is negligible, so noise exog is naturally damped toward
+    zero by the regularization that already runs in `_ridge_sa`.  This
+    keeps the "One SVD, One Ridge" property — exog support adds zero
+    extra Ridge fits, no model selection, no auxiliary state.
+
+    The exog signal is aggregated to the per-period (Level) timescale by
+    taking the mean of each P-block.  Intra-period variation in X is not
+    captured by this design.
     """
     if not isinstance(freq, str):
         raise TypeError(f"freq must be a string, got {type(freq).__name__}")
@@ -470,6 +495,56 @@ def forecast(
         raise ValueError(f"y must be 1-dimensional, got shape {y_arr.shape}")
     if len(y_arr) == 0:
         raise ValueError("y must not be empty")
+
+    # ── Exogenous variable validation ────────────────────────────────
+    has_exog = X_hist is not None or X_future is not None
+    if has_exog:
+        if X_hist is None or X_future is None:
+            raise ValueError("X_hist and X_future must be provided together")
+        X_hist_arr = np.asarray(X_hist, dtype=float)
+        X_future_arr = np.asarray(X_future, dtype=float)
+        if X_hist_arr.ndim == 1:
+            X_hist_arr = X_hist_arr[:, np.newaxis]
+        if X_future_arr.ndim == 1:
+            X_future_arr = X_future_arr[:, np.newaxis]
+        if X_hist_arr.ndim != 2:
+            raise ValueError(
+                f"X_hist must be 1D or 2D, got shape {X_hist_arr.shape}"
+            )
+        if X_future_arr.ndim != 2:
+            raise ValueError(
+                f"X_future must be 1D or 2D, got shape {X_future_arr.shape}"
+            )
+        if X_hist_arr.shape[0] != len(y_arr):
+            raise ValueError(
+                f"X_hist length ({X_hist_arr.shape[0]}) must match "
+                f"y length ({len(y_arr)})"
+            )
+        if X_future_arr.shape[0] != horizon:
+            raise ValueError(
+                f"X_future length ({X_future_arr.shape[0]}) must match "
+                f"horizon ({horizon})"
+            )
+        if X_hist_arr.shape[1] != X_future_arr.shape[1]:
+            raise ValueError(
+                f"X_hist columns ({X_hist_arr.shape[1]}) must match "
+                f"X_future columns ({X_future_arr.shape[1]})"
+            )
+        # NaN handling: column-mean imputation using training statistics
+        # only.  Consistent with the y-side `np.interp` policy in spirit
+        # (no silent 0-fill), and works even when X_future is fully NaN.
+        if np.isnan(X_hist_arr).any() or np.isnan(X_future_arr).any():
+            col_means = np.nanmean(X_hist_arr, axis=0)
+            col_means = np.where(np.isnan(col_means), 0.0, col_means)
+            X_hist_arr = np.where(np.isnan(X_hist_arr), col_means, X_hist_arr)
+            X_future_arr = np.where(
+                np.isnan(X_future_arr), col_means, X_future_arr
+            )
+        n_exog = X_hist_arr.shape[1]
+    else:
+        X_hist_arr = None
+        X_future_arr = None
+        n_exog = 0
 
     rng = np.random.RandomState(seed)
     # Interpolate NaN instead of filling with 0 (which biases Shape/Level)
@@ -511,6 +586,9 @@ def forecast(
 
     if n_complete > _MAX_COMPLETE:
         y = y[-(_MAX_COMPLETE * P) :]
+        if has_exog:
+            assert X_hist_arr is not None
+            X_hist_arr = X_hist_arr[-(_MAX_COMPLETE * P) :]
         n = len(y)
         n_complete = n // P
 
@@ -521,6 +599,16 @@ def forecast(
     mat = y_trim.reshape(n_complete, P).T  # (P, n_complete)
     L = mat.sum(axis=0)
 
+    # ── Aggregate exogenous to Level (per-period) timescale ─────────
+    # Period mean over each P-block, mirroring the (n_complete, P) row
+    # layout used to build `L`.  Intra-period variation in X is dropped
+    # by design — exog lives in the same time grid as Level.
+    X_L_raw: NDArray[np.floating] | None = None
+    if has_exog:
+        assert X_hist_arr is not None
+        X_hist_trim = X_hist_arr[-usable:]
+        X_L_raw = X_hist_trim.reshape(n_complete, P, n_exog).mean(axis=1)
+
     S_forecast, S_hist, m = _estimate_shape(
         mat,
         n_complete,
@@ -529,6 +617,16 @@ def forecast(
         L,
         horizon,
     )
+
+    # ── Aggregate future exogenous block-by-block (uses m from above) ─
+    X_future_L_raw: NDArray[np.floating] | None = None
+    if has_exog:
+        assert X_future_arr is not None
+        X_future_L_raw = np.zeros((m, n_exog))
+        for j in range(m):
+            s_idx = j * P
+            e_idx = min((j + 1) * P, horizon)
+            X_future_L_raw[j] = X_future_arr[s_idx:e_idx].mean(axis=0)
 
     cross_periods, max_cp = _compute_cross_periods(
         secondary,
@@ -574,9 +672,29 @@ def forecast(
 
     n_lag = 1 + (1 if max_cp >= 2 else 0)
     nf = nb + n_lag
+    nf_total = nf + n_exog  # nf when has_exog is False (n_exog == 0)
 
-    X = np.zeros((n_train, nf))
-    X[:, :nb] = base[start:]
+    # ── Build Ridge feature matrix (intercept, trend, lags, [exog]) ──
+    # Exog columns, when provided, are appended directly to the design
+    # matrix and standardized using training statistics.  No separate
+    # gating step: the LOOCV soft-average inside `_ridge_sa` already
+    # damps columns whose contribution to LOO error is negligible, so
+    # noise exog converges to ≈0 coefficients without any model
+    # selection machinery on top.  This is the "One Ridge" extension
+    # of FLAIR — exog adds columns, never adds Ridge calls.
+    X_full = np.zeros((n_train, nf_total))
+    X_full[:, :nb] = base[start:]
+
+    X_future_L_std: NDArray[np.floating] | None = None
+    if has_exog:
+        assert X_L_raw is not None and X_future_L_raw is not None
+        # z-score using training rows only ([start:]); constant cols → 1
+        mu_X = X_L_raw[start:].mean(axis=0)
+        sd_X = X_L_raw[start:].std(axis=0)
+        sd_X = np.where(sd_X < _EPS, 1.0, sd_X)
+        X_L_std = (X_L_raw - mu_X) / sd_X
+        X_future_L_std = (X_future_L_raw - mu_X) / sd_X
+        X_full[:, nf:] = X_L_std[start:]
 
     if _DIFF_TARGET and n_train >= 3:
         # ── LSR1 reparameterization ─────────────────────────────────
@@ -587,25 +705,29 @@ def forecast(
         #
         # Reparameterize: let δ₂ = 1 - β₂.  Rewrite the model as
         #   ΔL_innov[i] = β₀ + β₁(i/n) − δ₂ L_innov[i-1] + β₃ lag_cp
+        #                  + X_exog[i] · β_exog
         # Now Ridge shrinks δ₂ → 0, i.e., β₂ → 1 (random walk prior).
-        # No magic numbers.  Standard isotropic Ridge.
+        # The exog coefficients enter linearly on both sides of the
+        # rewrite and pass through unchanged — no extra correction.
         y_target = np.diff(L_innov[start - 1 :])  # ΔL_innov
-        X[:, nb] = -L_innov[start - 1 : -1]  # negated lag1 → δ₂ coeff
+        X_full[:, nb] = -L_innov[start - 1 : -1]  # negated lag1 → δ₂
         if max_cp >= 2:
-            X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
-
-        theta, loo_resid, _, Vt_r, s_r, d_avg_r = _ridge_sa(X, y_target)
-
-        # Recover original parameterization
-        beta = theta.copy()
-        beta[nb] = 1.0 - theta[nb]  # β₂ = 1 − δ₂
+            X_full[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
+        is_diff = True
     else:
         # ── Standard Ridge (fallback for very short series) ──────────
-        X[:, nb] = L_innov[start - 1 : -1]
+        X_full[:, nb] = L_innov[start - 1 : -1]
         if max_cp >= 2:
-            X[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
-        # Short series: no PLOOCV (insufficient data for meaningful weights)
-        beta, loo_resid, _, Vt_r, s_r, d_avg_r = _ridge_sa(X, L_innov[start:])
+            X_full[:, nb + 1] = L_innov[start - max_cp : n_complete - max_cp]
+        y_target = L_innov[start:]
+        is_diff = False
+
+    theta, loo_resid, _, Vt_r, s_r, d_avg_r = _ridge_sa(X_full, y_target)
+
+    # Recover original parameterization (only β₂ needs the rewrite)
+    beta = theta.copy()
+    if is_diff:
+        beta[nb] = 1.0 - theta[nb]  # β₂ = 1 − δ₂
 
     # ── Damped trend (LSR1 boundary extrapolation) ───────────────────
     phi = _estimate_phi(L_bc)
@@ -622,6 +744,8 @@ def forecast(
     # Compute h_test[j] for each forecast step using the point-forecast
     # feature vector projected through the Ridge SVD.  h_test grows with
     # horizon because trend extrapolates and lags become predicted values.
+    # When exog is provided, the feature vector also carries the
+    # standardized future exog row.
     h_test = np.empty(m)
     L_point = np.concatenate([L_innov, np.zeros(m)])
     for j in range(m):
@@ -629,9 +753,12 @@ def forecast(
         pred_pt = beta[0] + beta[1] * _damped_trend[j] + beta[nb] * L_point[ti - 1]
         if max_cp >= 2:
             pred_pt += beta[nb + 1] * L_point[ti - max_cp]
+        if has_exog:
+            assert X_future_L_std is not None
+            pred_pt += float(X_future_L_std[j] @ beta[nf:])
         L_point[ti] = pred_pt
 
-        x_j = np.zeros(nf)
+        x_j = np.zeros(nf_total)
         x_j[0] = 1.0
         x_j[1] = _damped_trend[j]
         if _DIFF_TARGET and n_train >= 3:
@@ -640,6 +767,9 @@ def forecast(
             x_j[nb] = L_point[ti - 1]
         if max_cp >= 2:
             x_j[nb + 1] = L_point[ti - max_cp]
+        if has_exog:
+            assert X_future_L_std is not None
+            x_j[nf:] = X_future_L_std[j]
 
         v = Vt_r @ x_j
         u_test = v / np.maximum(s_r, _EPS)
@@ -672,6 +802,9 @@ def forecast(
         pred = beta[0] + beta[1] * _damped_trend[j] + beta[nb] * L_paths[:, ti - 1]
         if max_cp >= 2:
             pred += beta[nb + 1] * L_paths[:, ti - max_cp]
+        if has_exog:
+            assert X_future_L_std is not None
+            pred += float(X_future_L_std[j] @ beta[nf:])
         L_paths[:, ti] = pred + noise_pool[:, j]
 
     # Point forecast = median path (noise_pool row 0 is arbitrary, use mean)
@@ -771,6 +904,8 @@ class FLAIR:
         horizon: int,
         n_samples: int | None = None,
         seed: int | None = None,
+        X_hist: ArrayLike | None = None,
+        X_future: ArrayLike | None = None,
     ) -> NDArray[np.floating]:
         """Generate probabilistic forecasts.
 
@@ -784,6 +919,11 @@ class FLAIR:
             Override the default number of sample paths.
         seed : int or None, optional
             Override the default random seed.
+        X_hist : array-like, shape (n, k) or (n,), optional
+            Historical exogenous variables aligned with y.  See
+            `forecast()` for details.
+        X_future : array-like, shape (horizon, k) or (horizon,), optional
+            Future exogenous variables for the forecast horizon.
 
         Returns
         -------
@@ -796,6 +936,8 @@ class FLAIR:
             self.freq,
             n_samples if n_samples is not None else self.n_samples,
             seed if seed is not None else self.seed,
+            X_hist=X_hist,
+            X_future=X_future,
         )
 
 
