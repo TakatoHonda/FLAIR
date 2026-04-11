@@ -247,6 +247,8 @@ FLAIR accepts an arbitrary number of per-step exogenous columns. The columns are
 - **Graceful degradation**: passing pure-noise exog inflates MASE by less than 1% on average, with bounded worst-case behavior.
 - **Limitation**: exog is coupled to the Level (per-period) factor only. Intra-period variation in `X` (e.g. hourly temperature within a daily period) is collapsed by the period mean and is not captured.
 
+End-to-end walkthrough on the UCI Bike Sharing dataset: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TakatoHonda/FLAIR/blob/main/examples/exogenous_variables.ipynb)
+
 ### Constants
 
 | Name | Description |
