@@ -1,6 +1,8 @@
 # ===== Large data (not tracked on any branch) =====
 data/
 longhorizon/
+validation/jena_climate_2009_2016.csv
+validation/jena.csv
 
 # ===== Build / Environment =====
 __pycache__/
