@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Exogenous variable support**: `forecast()` and `FLAIR.predict()` now accept `X_hist` / `X_future` parameters. Standardized exog columns are appended directly to the Level Ridge feature matrix; the LOOCV soft-averaged Ridge handles regularization, so no separate gating step is required ("One Ridge" preserved). When `X_hist=None` the result is bit-identical to the previous behavior.
+- **Empirical validation** in `validation/`: rolling-origin MASE on UCI Bike Sharing daily (−9.4%, 9/12 origins win) and Jena Climate hourly (−15.5%, 19/24 origins win), plus a noise-control showing graceful degradation (mean +0.9%).
+- New tests: `tests/test_exogenous.py` adds 21 cases covering smoke, validation, backward compatibility (byte-identity), and effect (informative shifts forecast, noise drift bounded).
+
 ## 0.3.0 (2026-04-07)
 
 - LSR1 diff-target reparameterization: Level を random walk として再定式化し、Ridge が差分 ΔL を直接予測

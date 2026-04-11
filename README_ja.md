@@ -61,6 +61,12 @@ lo, hi  = np.percentile(samples, [10, 90], axis=0)
 model   = FLAIR(freq='H')
 samples = model.predict(y, horizon=24)
 
+# ── 外生変数あり (天候・価格・祝日フラグなど) ─
+X_hist   = np.column_stack([temperature, humidity, is_holiday])  # (n, 3)
+X_future = np.column_stack([temp_fcst,   hum_fcst,   hol_fcst])  # (24, 3)
+samples  = forecast(y, horizon=24, freq='H',
+                    X_hist=X_hist, X_future=X_future)
+
 # ── pandas から ──────────────────────────────
 import pandas as pd
 ts = pd.read_csv('data.csv')['value']
@@ -187,7 +193,7 @@ FLAIR は **8データセット中3個**、**32個別設定中11個**で GPU Tra
 
 ## APIリファレンス
 
-### `forecast(y, horizon, freq, n_samples=200, seed=None)`
+### `forecast(y, horizon, freq, n_samples=200, seed=None, X_hist=None, X_future=None)`
 
 単変量時系列の確率的予測を生成します。
 
@@ -198,6 +204,8 @@ FLAIR は **8データセット中3個**、**32個別設定中11個**で GPU Tra
 | `freq` | str | 周波数文字列（[対応周波数表](#対応周波数)参照） |
 | `n_samples` | int | サンプルパス数（デフォルト: 200） |
 | `seed` | int or None | 再現性のための乱数シード（デフォルト: None） |
+| `X_hist` | array-like (n, k) または (n,) または None | `y` と同じ長さの履歴外生変数。`X_future` と同時に指定する必要があります |
+| `X_future` | array-like (horizon, k) または (horizon,) または None | 予測区間に対応する将来の外生変数。`X_hist` と同時に指定する必要があります |
 
 **戻り値**: `ndarray` shape `(n_samples, horizon)`。確率予測のサンプルパス
 
@@ -207,7 +215,13 @@ samples = forecast(y, horizon=24, freq='H')
 point   = samples.mean(axis=0)
 median  = np.median(samples, axis=0)
 lo, hi  = np.percentile(samples, [10, 90], axis=0)
+
+# 外生変数あり
+samples = forecast(y, horizon=24, freq='H',
+                   X_hist=X_hist, X_future=X_future)
 ```
+
+`X_hist=None`（デフォルト）の場合、結果は外生引数を渡さない呼び出しと bit-identical です。
 
 ### `FLAIR(freq, n_samples=200, seed=None)`
 
@@ -215,14 +229,23 @@ lo, hi  = np.percentile(samples, [10, 90], axis=0)
 
 | メソッド | 説明 |
 |---------|------|
-| `predict(y, horizon, n_samples=None, seed=None)` | `forecast()` と同等、インスタンスのデフォルト値を使用 |
+| `predict(y, horizon, n_samples=None, seed=None, X_hist=None, X_future=None)` | `forecast()` と同等、インスタンスのデフォルト値を使用 |
 
 ```python
 from flaircast import FLAIR
 model = FLAIR(freq='D', n_samples=500)
-for series in dataset:
-    samples = model.predict(series, horizon=7)
+for series, X_h, X_f in dataset:
+    samples = model.predict(series, horizon=7, X_hist=X_h, X_future=X_f)
 ```
+
+### 外生変数
+
+FLAIR は任意の数の per-step 外生列を受け付けます。各列は訓練窓の統計量で z-score 正規化された後、期間平均で Level 時間スケールに集約され、Level Ridge の特徴行列に直接結合されます。**新しいハイパーパラメータも、モデル選択ステップもありません** ― `_ridge_sa` 内部の LOOCV ソフト平均 Ridge が正則化を担うため、ノイズ列は自然に減衰します。"One Ridge" の哲学はそのまま保たれます。
+
+- **推奨設定**: 外生列の係数を安定推定するため、訓練窓には数十周期分のデータが望ましい (例: daily exog なら 60-90 日、hourly exog なら 60 日以上)
+- **検証済みの効果**: `validation/` に rolling-origin ベンチマークを収録。UCI Bike Sharing daily で MASE −9.4% (9/12 origin で勝ち)、Jena Climate hourly で MASE −15.5% (19/24 origin で勝ち)
+- **graceful degradation**: 純ノイズの外生を渡しても平均 MASE 悪化は 1% 未満、最悪ケースも bounded
+- **制約**: 外生は Level (周期単位) 因子のみに結合されます。周期内の `X` の変動 (例: 1 日周期の中での時間別気温) は期間平均で潰されます
 
 ### 定数
 
@@ -246,7 +269,7 @@ FLAIR はあらゆるスケールで**最小記述長 (MDL)** 原理を適用し
 
 - **非周期系列**: Level × Shape 分解は周期性がない場合に圧縮効果がありません（例: 為替レート）。専用の非周期モデルを使用してください
 - **間欠需要**: ゼロ率 >30% の系列は乗法構造と相性が悪いです。Croston 系の手法がより適切です
-- **外部変数非対応**: コアAPIはカレンダーイベント、価格、プロモーション等の外部特徴量を受け付けません
+- **外生変数の解像度は粗い**: `X_hist` / `X_future` は期間平均で Level 時間スケールに集約されます。周期内の変動 (例: 1日周期内の時間別気温) は構造的に保持されません
 - **短い系列**: 3完全周期未満の場合、P=1 に退化し（生の系列に対する単純な Ridge）、分解の恩恵を受けられません
 
 ## Citation
