@@ -61,6 +61,12 @@ lo, hi  = np.percentile(samples, [10, 90], axis=0)
 model   = FLAIR(freq='H')
 samples = model.predict(y, horizon=24)
 
+# ── With exogenous variables (weather, prices, holidays, ...) ─
+X_hist   = np.column_stack([temperature, humidity, is_holiday])  # (n, 3)
+X_future = np.column_stack([temp_fcst,   hum_fcst,   hol_fcst])  # (24, 3)
+samples  = forecast(y, horizon=24, freq='H',
+                    X_hist=X_hist, X_future=X_future)
+
 # ── From pandas ──────────────────────────────
 import pandas as pd
 ts = pd.read_csv('data.csv')['value']
@@ -187,7 +193,7 @@ Three compressions act simultaneously:
 
 ## API Reference
 
-### `forecast(y, horizon, freq, n_samples=200, seed=None)`
+### `forecast(y, horizon, freq, n_samples=200, seed=None, X_hist=None, X_future=None)`
 
 Generate probabilistic forecasts for a univariate time series.
 
@@ -198,6 +204,8 @@ Generate probabilistic forecasts for a univariate time series.
 | `freq` | str | Frequency string (see [table](#supported-frequencies)) |
 | `n_samples` | int | Number of sample paths (default: 200) |
 | `seed` | int or None | Random seed for reproducibility (default: None) |
+| `X_hist` | array-like (n, k) or (n,) or None | Historical exogenous variables aligned with `y`. Must be provided together with `X_future`. |
+| `X_future` | array-like (horizon, k) or (horizon,) or None | Future exogenous values for the forecast horizon. Must be provided together with `X_hist`. |
 
 **Returns**: `ndarray` of shape `(n_samples, horizon)`. Probabilistic forecast sample paths.
 
@@ -207,7 +215,13 @@ samples = forecast(y, horizon=24, freq='H')
 point   = samples.mean(axis=0)
 median  = np.median(samples, axis=0)
 lo, hi  = np.percentile(samples, [10, 90], axis=0)
+
+# With exogenous variables
+samples = forecast(y, horizon=24, freq='H',
+                   X_hist=X_hist, X_future=X_future)
 ```
+
+When `X_hist=None` (the default) the result is bit-identical to a call without the exog arguments.
 
 ### `FLAIR(freq, n_samples=200, seed=None)`
 
@@ -215,14 +229,23 @@ Class wrapper. Useful when forecasting multiple series with the same frequency.
 
 | Method | Description |
 |--------|-------------|
-| `predict(y, horizon, n_samples=None, seed=None)` | Same as `forecast()`, uses instance defaults |
+| `predict(y, horizon, n_samples=None, seed=None, X_hist=None, X_future=None)` | Same as `forecast()`, uses instance defaults |
 
 ```python
 from flaircast import FLAIR
 model = FLAIR(freq='D', n_samples=500)
-for series in dataset:
-    samples = model.predict(series, horizon=7)
+for series, X_h, X_f in dataset:
+    samples = model.predict(series, horizon=7, X_hist=X_h, X_future=X_f)
 ```
+
+### Exogenous variables
+
+FLAIR accepts an arbitrary number of per-step exogenous columns. The columns are z-scored using training-window statistics, aggregated to the per-period (Level) timescale via period mean, and appended directly to the Level Ridge feature matrix. **No new hyperparameters, no model selection** — the existing LOOCV soft-averaged Ridge inside `_ridge_sa` handles regularization, so noise covariates are naturally damped without any explicit gating step. "One Ridge" is preserved.
+
+- **Recommended setup**: at least a few dozen complete periods of training data (e.g. 60–90 days for daily exog, 60+ days for hourly exog) for stable coefficient estimates.
+- **Validated improvements**: see `validation/` for rolling-origin benchmarks. UCI Bike Sharing daily: MASE −9.4% (9/12 origins win). Jena Climate hourly: MASE −15.5% (19/24 origins win).
+- **Graceful degradation**: passing pure-noise exog inflates MASE by less than 1% on average, with bounded worst-case behavior.
+- **Limitation**: exog is coupled to the Level (per-period) factor only. Intra-period variation in `X` (e.g. hourly temperature within a daily period) is collapsed by the period mean and is not captured.
 
 ### Constants
 
@@ -246,7 +269,7 @@ FLAIR applies the **Minimum Description Length** principle at every scale:
 
 - **Non-periodic series**: the Level × Shape decomposition provides no compression benefit when there is no periodicity (e.g., exchange rates). Use a dedicated non-periodic model instead
 - **Intermittent demand**: series with >30% zeros are poorly served by the multiplicative structure. Croston-type methods are better suited
-- **No exogenous variables**: the core API does not accept external features (calendar events, prices, promotions)
+- **Coarse exogenous resolution**: `X_hist` / `X_future` are aggregated to the per-period (Level) timescale via period mean. Intra-period variation in covariates (e.g. hourly weather within a daily period) is dropped by design
 - **Short series**: fewer than 3 complete periods forces P=1 degeneration (plain Ridge on raw series)
 
 ## Citation
