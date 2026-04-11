@@ -11,7 +11,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Check for forbidden files on main
         run: |
           forbidden=$(git ls-tree -r --name-only HEAD | grep -E '^(research/|results/|docs/|scripts/|CLAUDE\.md)' || true)
@@ -30,8 +30,8 @@ jobs:
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8
         with:
           version: "latest"
       - run: uv python install ${{ matrix.python-version }}
@@ -47,8 +47,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8
         with:
           version: "latest"
       - run: uv python install 3.12
@@ -59,8 +59,8 @@ jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v8
         with:
           version: "latest"
       - run: uv python install 3.12

@@ -46,7 +46,18 @@ Homepage = "https://github.com/TakatoHonda/FLAIR"
 Repository = "https://github.com/TakatoHonda/FLAIR"
 
 [tool.hatch.build.targets.sdist]
-include = ["flaircast/", "tests/", "README.md", "LICENSE", "pyproject.toml"]
+# Explicit include list — keep the sdist focused on what's needed to
+# rebuild and verify the wheel.  Validation scripts and benchmark data
+# live in the GitHub repo only and are intentionally NOT shipped on PyPI.
+include = [
+    "/flaircast",
+    "/tests",
+    "/README.md",
+    "/README_ja.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/pyproject.toml",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["flaircast"]
