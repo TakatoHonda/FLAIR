@@ -68,6 +68,11 @@ line-length = 99
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 ignore = ["RUF002", "RUF003"]
 
+[tool.ruff.lint.per-file-ignores]
+# Notebook generator scripts emit long markdown literals; line-length
+# doesn't affect the generated cell readability.
+"examples/_build_*.py" = ["E501", "RUF001"]
+
 [tool.mypy]
 python_version = "3.9"
 warn_return_any = true
