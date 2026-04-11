@@ -18,7 +18,6 @@ import pytest
 
 from flaircast import FLAIR, forecast
 
-
 # ── Fixtures ────────────────────────────────────────────────────────────
 
 
@@ -231,7 +230,7 @@ class TestExogEffect:
         scale = max(float(y.std()), 1e-6)
         drift = float(np.abs(s_no.mean(axis=0) - s_ex.mean(axis=0)).mean())
         assert drift / scale < 0.1, (
-            f"noise exog drift {drift / scale:.4f}σ exceeds 0.1σ tolerance"
+            f"noise exog drift {drift / scale:.4f} sigma exceeds 0.1 sigma tolerance"
         )
 
     def test_noise_exog_drift_aggregate(self):
@@ -251,9 +250,9 @@ class TestExogEffect:
             drifts.append(
                 float(np.abs(s_no.mean(axis=0) - s_ex.mean(axis=0)).mean()) / scale
             )
-        # Aggregate noise leak should average well below 0.05σ
+        # Aggregate noise leak should average well below 0.05 sigma
         assert float(np.mean(drifts)) < 0.05, (
-            f"mean noise drift {np.mean(drifts):.4f}σ; per-trial: {drifts}"
+            f"mean noise drift {np.mean(drifts):.4f} sigma; per-trial: {drifts}"
         )
 
     def test_constant_exog_handled(self):
