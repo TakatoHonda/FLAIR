@@ -118,16 +118,12 @@ class TestExogSmoke:
 class TestExogValidation:
     def test_X_hist_only_raises(self):
         y = np.random.RandomState(0).randn(100)
-        with pytest.raises(
-            ValueError, match="X_hist and X_future must be provided together"
-        ):
+        with pytest.raises(ValueError, match="X_hist and X_future must be provided together"):
             forecast(y, 7, "D", X_hist=np.random.randn(100, 2))
 
     def test_X_future_only_raises(self):
         y = np.random.RandomState(0).randn(100)
-        with pytest.raises(
-            ValueError, match="X_hist and X_future must be provided together"
-        ):
+        with pytest.raises(ValueError, match="X_hist and X_future must be provided together"):
             forecast(y, 7, "D", X_future=np.random.randn(7, 2))
 
     def test_X_hist_length_mismatch(self):
@@ -184,9 +180,7 @@ class TestExogBackwardCompat:
     def test_explicit_none_byte_identical(self, informative_exog):
         y, h, freq, _, _ = informative_exog
         s_implicit = forecast(y, h, freq, n_samples=50, seed=42)
-        s_explicit = forecast(
-            y, h, freq, n_samples=50, seed=42, X_hist=None, X_future=None
-        )
+        s_explicit = forecast(y, h, freq, n_samples=50, seed=42, X_hist=None, X_future=None)
         np.testing.assert_array_equal(s_implicit, s_explicit)
 
     def test_class_api_explicit_none_byte_identical(self, informative_exog):
@@ -205,9 +199,7 @@ class TestExogEffect:
         """Strong informative exog should shift the point forecast meaningfully."""
         y, h, freq, x, xf = informative_exog
         s_no = forecast(y, h, freq, n_samples=200, seed=42)
-        s_ex = forecast(
-            y, h, freq, n_samples=200, seed=42, X_hist=x, X_future=xf
-        )
+        s_ex = forecast(y, h, freq, n_samples=200, seed=42, X_hist=x, X_future=xf)
         diff = np.abs(s_no.mean(axis=0) - s_ex.mean(axis=0))
         scale = max(float(s_no.std()), 1e-6)
         # Effect must exceed 1 sigma — much stronger than the loose 0.1 atol
@@ -224,9 +216,7 @@ class TestExogEffect:
         """
         y, h, freq, X_h, X_f = noise_exog
         s_no = forecast(y, h, freq, n_samples=200, seed=42)
-        s_ex = forecast(
-            y, h, freq, n_samples=200, seed=42, X_hist=X_h, X_future=X_f
-        )
+        s_ex = forecast(y, h, freq, n_samples=200, seed=42, X_hist=X_h, X_future=X_f)
         scale = max(float(y.std()), 1e-6)
         drift = float(np.abs(s_no.mean(axis=0) - s_ex.mean(axis=0)).mean())
         assert drift / scale < 0.1, (
@@ -243,13 +233,9 @@ class TestExogEffect:
             X_h = rng.randn(n, 3)
             X_f = rng.randn(h, 3)
             s_no = forecast(y, h, "D", n_samples=100, seed=42)
-            s_ex = forecast(
-                y, h, "D", n_samples=100, seed=42, X_hist=X_h, X_future=X_f
-            )
+            s_ex = forecast(y, h, "D", n_samples=100, seed=42, X_hist=X_h, X_future=X_f)
             scale = max(float(y.std()), 1e-6)
-            drifts.append(
-                float(np.abs(s_no.mean(axis=0) - s_ex.mean(axis=0)).mean()) / scale
-            )
+            drifts.append(float(np.abs(s_no.mean(axis=0) - s_ex.mean(axis=0)).mean()) / scale)
         # Aggregate noise leak should average well below 0.05 sigma
         assert float(np.mean(drifts)) < 0.05, (
             f"mean noise drift {np.mean(drifts):.4f} sigma; per-trial: {drifts}"
@@ -269,9 +255,7 @@ class TestExogEffect:
         y, h, freq, x, xf = informative_exog
         x_nan = x.copy()
         x_nan[10:20] = np.nan
-        s = forecast(
-            y, h, freq, n_samples=50, seed=42, X_hist=x_nan, X_future=xf
-        )
+        s = forecast(y, h, freq, n_samples=50, seed=42, X_hist=x_nan, X_future=xf)
         assert np.all(np.isfinite(s))
 
     def test_multiple_frequencies(self):

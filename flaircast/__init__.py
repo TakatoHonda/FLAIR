@@ -508,22 +508,16 @@ def forecast(
         if X_future_arr.ndim == 1:
             X_future_arr = X_future_arr[:, np.newaxis]
         if X_hist_arr.ndim != 2:
-            raise ValueError(
-                f"X_hist must be 1D or 2D, got shape {X_hist_arr.shape}"
-            )
+            raise ValueError(f"X_hist must be 1D or 2D, got shape {X_hist_arr.shape}")
         if X_future_arr.ndim != 2:
-            raise ValueError(
-                f"X_future must be 1D or 2D, got shape {X_future_arr.shape}"
-            )
+            raise ValueError(f"X_future must be 1D or 2D, got shape {X_future_arr.shape}")
         if X_hist_arr.shape[0] != len(y_arr):
             raise ValueError(
-                f"X_hist length ({X_hist_arr.shape[0]}) must match "
-                f"y length ({len(y_arr)})"
+                f"X_hist length ({X_hist_arr.shape[0]}) must match y length ({len(y_arr)})"
             )
         if X_future_arr.shape[0] != horizon:
             raise ValueError(
-                f"X_future length ({X_future_arr.shape[0]}) must match "
-                f"horizon ({horizon})"
+                f"X_future length ({X_future_arr.shape[0]}) must match horizon ({horizon})"
             )
         if X_hist_arr.shape[1] != X_future_arr.shape[1]:
             raise ValueError(
@@ -537,9 +531,7 @@ def forecast(
             col_means = np.nanmean(X_hist_arr, axis=0)
             col_means = np.where(np.isnan(col_means), 0.0, col_means)
             X_hist_arr = np.where(np.isnan(X_hist_arr), col_means, X_hist_arr)
-            X_future_arr = np.where(
-                np.isnan(X_future_arr), col_means, X_future_arr
-            )
+            X_future_arr = np.where(np.isnan(X_future_arr), col_means, X_future_arr)
         n_exog = X_hist_arr.shape[1]
     else:
         X_hist_arr = None
