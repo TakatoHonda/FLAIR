@@ -73,16 +73,60 @@ def _validate_inputs(
     return y_arr
 
 
+def _interp_nan_1d(
+    arr: NDArray[np.floating],
+    all_nan_fallback: float = 0.0,
+) -> NDArray[np.floating]:
+    """Linear-interpolate NaNs in a 1-D array.
+
+    Tiered fallback (the same policy used by both ``y`` preprocessing
+    and per-column exog cleanup):
+
+    - 2+ valid values  →  linear interpolation against the index axis
+    - 1 valid value    →  fill with that single value
+    - 0 valid values   →  fill with ``all_nan_fallback``
+
+    The ``all_nan_fallback`` parameter is the only thing that varies
+    between consumers: ``y`` and ``X_hist`` use ``0.0`` (no useful
+    boundary information), while ``X_future`` columns use the last
+    valid ``X_hist`` value of the same column (one-step persistence).
+    """
+    out = arr.copy()
+    nan_mask = np.isnan(out)
+    if not nan_mask.any():
+        return out
+    valid = ~nan_mask
+    n_valid = int(valid.sum())
+    if n_valid >= 2:
+        idx = np.arange(len(out))
+        out[nan_mask] = np.interp(idx[nan_mask], idx[valid], out[valid])
+    elif n_valid == 1:
+        out[nan_mask] = out[valid][0]
+    else:
+        out[:] = all_nan_fallback
+    return out
+
+
 def _validate_and_clean_exog(
     X_hist: ArrayLike | None,
     X_future: ArrayLike | None,
     n: int,
     horizon: int,
 ) -> tuple[NDArray[np.floating] | None, NDArray[np.floating] | None, int]:
-    """Validate exogenous arrays and impute NaNs via training column means.
+    """Validate exogenous arrays and interpolate NaNs column by column.
 
     Returns ``(X_hist_arr, X_future_arr, n_exog)``.  When neither array
     is provided, returns ``(None, None, 0)``.
+
+    NaN policy (column-wise, mirrors the y-side ``_interp_nan_1d``):
+
+    - For each column of ``X_hist`` we linear-interpolate over the
+      column index axis (matching ``_preprocess_y``).
+    - For each column of ``X_future`` we likewise interpolate when the
+      column has at least one valid value, but if the entire future
+      column is NaN we forward-fill with the *last valid X_hist value*
+      of that column rather than 0 — a one-step persistence assumption,
+      which is more physical than zeroing an unknown covariate.
     """
     has_exog = X_hist is not None or X_future is not None
     if not has_exog:
@@ -91,8 +135,8 @@ def _validate_and_clean_exog(
     if X_hist is None or X_future is None:
         raise ValueError("X_hist and X_future must be provided together")
 
-    X_hist_arr = np.asarray(X_hist, dtype=float)
-    X_future_arr = np.asarray(X_future, dtype=float)
+    X_hist_arr = np.asarray(X_hist, dtype=float).copy()
+    X_future_arr = np.asarray(X_future, dtype=float).copy()
     if X_hist_arr.ndim == 1:
         X_hist_arr = X_hist_arr[:, np.newaxis]
     if X_future_arr.ndim == 1:
@@ -113,16 +157,20 @@ def _validate_and_clean_exog(
             f"X_future columns ({X_future_arr.shape[1]})"
         )
 
-    # NaN handling: column-mean imputation using training statistics only.
-    # Consistent with the y-side `np.interp` policy in spirit (no silent
-    # 0-fill), and works even when X_future is fully NaN.
-    if np.isnan(X_hist_arr).any() or np.isnan(X_future_arr).any():
-        col_means = np.nanmean(X_hist_arr, axis=0)
-        col_means = np.where(np.isnan(col_means), 0.0, col_means)
-        X_hist_arr = np.where(np.isnan(X_hist_arr), col_means, X_hist_arr)
-        X_future_arr = np.where(np.isnan(X_future_arr), col_means, X_future_arr)
+    n_exog = X_hist_arr.shape[1]
+    hist_has_nan = bool(np.isnan(X_hist_arr).any())
+    future_has_nan = bool(np.isnan(X_future_arr).any())
+    if hist_has_nan or future_has_nan:
+        for j in range(n_exog):
+            X_hist_arr[:, j] = _interp_nan_1d(X_hist_arr[:, j])
+            # X_hist_arr[:, j] is now NaN-free; use its last value as
+            # the all-NaN fallback for the matching X_future column.
+            X_future_arr[:, j] = _interp_nan_1d(
+                X_future_arr[:, j],
+                all_nan_fallback=float(X_hist_arr[-1, j]),
+            )
 
-    return X_hist_arr, X_future_arr, X_hist_arr.shape[1]
+    return X_hist_arr, X_future_arr, n_exog
 
 
 # ── y preprocessing ────────────────────────────────────────────────────
@@ -132,19 +180,10 @@ def _preprocess_y(y_arr: NDArray[np.floating]) -> tuple[NDArray[np.floating], fl
     """Interpolate NaNs in ``y`` and apply a location shift to ensure positivity.
 
     Returns ``(y, y_shift)`` where ``y_shift`` will be subtracted from
-    the final samples to undo the shift.
+    the final samples to undo the shift.  NaN handling delegates to the
+    shared ``_interp_nan_1d`` helper so y and exog use the same policy.
     """
-    y = y_arr.copy()
-    nan_mask = np.isnan(y)
-    if nan_mask.any():
-        valid = ~nan_mask
-        if valid.sum() >= 2:
-            idx = np.arange(len(y))
-            y[nan_mask] = np.interp(idx[nan_mask], idx[valid], y[valid])
-        elif valid.sum() == 1:
-            y[nan_mask] = y[valid][0]
-        else:
-            y[:] = 0.0
+    y = _interp_nan_1d(y_arr)
     y_shift = max(1 - float(y.min()), 1.0)
     return y + y_shift, y_shift
 
@@ -353,7 +392,6 @@ def _compute_lwcp_leverages(
     provided, the standardized future exog row enters the leverage
     feature vector as well.
     """
-    has_exog = X_future_L_std is not None
     h_test = np.empty(m)
     L_point = np.concatenate([L_innov, np.zeros(m)])
     for j in range(m):
@@ -361,8 +399,7 @@ def _compute_lwcp_leverages(
         pred_pt = beta[0] + beta[1] * damped_trend[j] + beta[nb] * L_point[ti - 1]
         if max_cp >= 2:
             pred_pt += beta[nb + 1] * L_point[ti - max_cp]
-        if has_exog:
-            assert X_future_L_std is not None
+        if X_future_L_std is not None:
             pred_pt += float(X_future_L_std[j] @ beta[nf:])
         L_point[ti] = pred_pt
 
@@ -375,8 +412,7 @@ def _compute_lwcp_leverages(
             x_j[nb] = L_point[ti - 1]
         if max_cp >= 2:
             x_j[nb + 1] = L_point[ti - max_cp]
-        if has_exog:
-            assert X_future_L_std is not None
+        if X_future_L_std is not None:
             x_j[nf:] = X_future_L_std[j]
 
         v = Vt_r @ x_j
@@ -417,10 +453,8 @@ def _sample_level_paths(
     augmented Level path array and the Student-t degrees of freedom
     used (so the caller can reuse it for post-hoc shrinkage).
     """
-    has_exog = X_future_L_std is not None
-    nf_eff = nf  # Ridge feature width before exog
     sigma2_loo = float(np.mean(loo_resid**2))
-    nu = max(n_train - nf_eff, 3)  # floor at 3 for stability
+    nu = max(n_train - nf, 3)  # floor at 3 for stability
 
     noise_pool = (
         rng.standard_t(df=nu, size=(n_samples, m))
@@ -433,8 +467,7 @@ def _sample_level_paths(
         pred = beta[0] + beta[1] * damped_trend[j] + beta[nb] * L_paths[:, ti - 1]
         if max_cp >= 2:
             pred += beta[nb + 1] * L_paths[:, ti - max_cp]
-        if has_exog:
-            assert X_future_L_std is not None
+        if X_future_L_std is not None:
             pred += float(X_future_L_std[j] @ beta[nf:])
         L_paths[:, ti] = pred + noise_pool[:, j]
 
