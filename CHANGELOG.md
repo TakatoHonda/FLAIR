@@ -1,10 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-04-11)
 
 - **Exogenous variable support**: `forecast()` and `FLAIR.predict()` now accept `X_hist` / `X_future` parameters. Standardized exog columns are appended directly to the Level Ridge feature matrix; the LOOCV soft-averaged Ridge handles regularization, so no separate gating step is required ("One Ridge" preserved). When `X_hist=None` the result is bit-identical to the previous behavior.
 - **Empirical validation** in `validation/`: rolling-origin MASE on UCI Bike Sharing daily (−9.4%, 9/12 origins win) and Jena Climate hourly (−15.5%, 19/24 origins win), plus a noise-control showing graceful degradation (mean +0.9%).
 - New tests: `tests/test_exogenous.py` adds 21 cases covering smoke, validation, backward compatibility (byte-identity), and effect (informative shifts forecast, noise drift bounded).
+- Remove unused module-level `_DIAG` dict (no readers; cleanup only).
+
+## 0.4.1 (2026-04-08)
+
+- Fix: restore historical-range clipping for forecast samples — inverse Box-Cox combined with recursive Student-t simulation can produce extreme values that blow up MASE on certain configs; clip to `[y_lo − range, y_hi + range]` based on a recent-history window, applied after the post-hoc shrinkage.
+- Fix: post-hoc interval shrinkage to correct Student-t overdispersion (`sqrt((ν−2)/ν)` toward the median). Validated MASE-safe on GIFT-Eval before re-applying.
+- Sync `pyproject.toml` version with `flaircast.__version__`.
+
+## 0.4.0 (2026-04-08)
+
+- **LWCP (Leverage-Weighted Conformal Prediction)**: LOO residuals are now LWCP-normalized (`e_i^LOO / sqrt(1 + h_ii)`) and the test-point interval is scaled by `sqrt(1 + h_test)` per horizon, computed from the same Ridge SVD. Removes leverage-dependent heteroscedasticity in the predictive distribution.
+- **Student-t predictive distribution in Box-Cox space**: when σ² is unknown and estimated from LOO residuals, the predictive distribution in BC space is Student-t with `ν = n_train − p`, not Gaussian. As `n → ∞`, `t_ν → N(0,1)`; for short series, the heavier tails reflect higher uncertainty automatically — zero new hyperparameters.
+- **Scenario-coherent phase noise** restored as the default: SVD residual columns are sampled in whole columns rather than independently per phase, preserving cross-phase correlation within each forecast block.
+- **NaN interpolation** replaces silent 0-fill (`np.interp` for both interior and boundary NaNs); 0-fill biased the Shape and Level estimates downward.
+- Refactor: remove the Shape^γ damping experiment ("restore One SVD") — the additional knob did not survive ablation and conflicted with the "One SVD, One Ridge" design philosophy.
 
 ## 0.3.0 (2026-04-07)
 

@@ -14,7 +14,7 @@
 
 - **[Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting) で第1位** (25データセット・ゼロショット). Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205Mパラメータ, GPU)
 - **[GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval) で統計手法の中で最高精度** (97構成, 23データセット). relMASE **0.857**, relCRPS **0.610**
-- **Python 約500行**。依存: numpy + scipy のみ
+- **Python 約1000行・NumPy/SciPy のみ**。深層学習なし、基盤モデルなし、GPU 不要
 
 ## 目次
 

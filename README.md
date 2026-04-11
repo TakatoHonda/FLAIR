@@ -14,7 +14,7 @@ Zero hyperparameters. One SVD. CPU only.
 
 - **#1 on [Chronos Benchmark II](https://github.com/amazon-science/chronos-forecasting)** (25 zero-shot datasets). Agg. Rel. MASE **0.696** vs. Chronos-Bolt-Base 0.791 (205M params, GPU)
 - **Best statistical method on [GIFT-Eval](https://huggingface.co/spaces/Salesforce/GIFT-Eval)** (97 configs, 23 datasets). relMASE **0.857**, relCRPS **0.610**
-- **~500 lines of Python**. Dependencies: numpy + scipy
+- **~1000 lines of pure NumPy/SciPy**. No deep learning, no foundation models, no GPU.
 
 ## Table of Contents
 
